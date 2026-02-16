@@ -391,6 +391,20 @@ public class UserInput
         return SpeedModifiers[CurrentSpeedModifier];
     }
 
+    public void OnMouseMiddleClick()
+    {
+        if (OrbitMode)
+        {
+            return;
+        }
+        else
+        {
+            CurrentSpeedModifier = 4;
+        }
+    }
+
+    public float GetCurrentSpeed => SpeedModifiers[CurrentSpeedModifier];
+
     private void HandleKeyboardInput(float deltaTime, TrackedKeys keyboardState)
     {
         var maxSpeed = MovementSpeed * SpeedModifiers[CurrentSpeedModifier];

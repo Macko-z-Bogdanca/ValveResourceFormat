@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using GUI.Utils;
+using ValveResourceFormat.Renderer;
 
 namespace GUI.Controls;
 

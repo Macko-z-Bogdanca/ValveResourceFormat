@@ -233,6 +233,7 @@ namespace GUI.Types.GLViewers
             Picker?.Resize(w, h);
         }
 
+        float orbitDistance;
         protected override void OnMouseWheel(object? sender, MouseEventArgs e)
         {
             base.OnMouseWheel(sender, e);
@@ -252,6 +253,8 @@ namespace GUI.Types.GLViewers
             {
                 SetMoveSpeedOrZoomLabel($"Move speed: {modifier:0.0}x (scroll to change)");
             }
+
+            orbitDistance = modifier;
         }
 
         protected override void OnMouseUp(object? sender, MouseEventArgs e)
@@ -286,6 +289,19 @@ namespace GUI.Types.GLViewers
                         ? PickingIntent.Open
                         : PickingIntent.Details;
                     Picker?.RequestNextFrame(e.X, e.Y, intent);
+                }
+            }
+
+            if (e.Button == MouseButtons.Middle)
+            {
+                if (Input.OrbitMode)
+                {
+                    return;
+                }
+                else
+                {
+                    Input.OnMouseMiddleClick();
+                    SetMoveSpeedOrZoomLabel($"Move speed: 1.0x (scroll to change)");
                 }
             }
         }
@@ -506,6 +522,31 @@ namespace GUI.Types.GLViewers
             }
 
             BlitFramebufferToScreen();
+
+            if (Input.OrbitMode)
+            {
+                TextRenderer.AddText(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
+                {
+                    X = MainFramebuffer.Width - 398f,
+                    Y = MainFramebuffer.Height - 4f,
+                    Scale = 14f,
+                    Color = Color32.White,
+                    Text = $"Orbit distance: {orbitDistance:0.0}x    [Scroll] to change",
+                });
+
+            }
+
+            else if (Input.GetCurrentSpeed != 1.0f)
+            {
+                TextRenderer.AddText(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
+                {
+                    X = MainFramebuffer.Width - 355f,
+                    Y = MainFramebuffer.Height - 4f,
+                    Scale = 14f,
+                    Color = Color32.White,
+                    Text = $"Movement Speed: {Input.GetCurrentSpeed:0.0}x    [MMouse] to reset",
+                });
+            }
 
             if (GrabbedMouse)
             {
