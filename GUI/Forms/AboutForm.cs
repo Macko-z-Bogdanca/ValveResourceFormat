@@ -79,9 +79,9 @@ namespace GUI.Forms
             OpenUrl("https://github.com/ValveResourceFormat/ValveResourceFormat");
         }
 
-        private void OnKeybindsClick(object sender, EventArgs e)
+        private void OnDiscordClick(object sender, EventArgs e)
         {
-            OpenUrl("https://github.com/ValveResourceFormat/ValveResourceFormat?tab=readme-ov-file#gui-keybinds");
+            OpenUrl("https://discord.gg/s9QQ7Wg7r4");
         }
 
         private void OnViewReleaseNotesButtonClick(object sender, EventArgs e)
@@ -104,7 +104,7 @@ namespace GUI.Forms
             ToggleAutomaticUpdateCheck(checkForUpdatesCheckbox.Checked);
         }
 
-        public static void ToggleAutomaticUpdateCheck(bool enabled = true)
+        private static void ToggleAutomaticUpdateCheck(bool enabled = true)
         {
             Settings.Config.Update.CheckAutomatically = enabled;
             Settings.Config.Update.LastCheck = string.Empty;

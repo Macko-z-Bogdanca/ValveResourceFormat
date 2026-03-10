@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using Microsoft.Extensions.Logging;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Windowing.Common;
@@ -9,7 +7,9 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer;
-using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Renderer.Input;
+using ValveResourceFormat.Renderer.Utils;
+using ValveResourceFormat.Renderer.World;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 
@@ -257,7 +257,7 @@ internal class RenderTestWindow : GameWindow
         // Clear the screen
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        RenderScene((float)args.Time);
+        RenderScene();
 
         SwapBuffers();
     }
@@ -273,8 +273,6 @@ internal class RenderTestWindow : GameWindow
         textRenderer = new TextRenderer(rendererContext, SceneRenderer.Camera);
         textRenderer.Load();
 
-        SceneRenderer.Postprocess.Load();
-
         // Create framebuffer for rendering
         framebuffer = Framebuffer.Prepare("MainFramebuffer", 4, 4, 4,
             new(PixelInternalFormat.Rgba16f, PixelFormat.Rgba, PixelType.HalfFloat),
@@ -283,6 +281,7 @@ internal class RenderTestWindow : GameWindow
 
         SceneRenderer.Initialize();
         SceneRenderer.MainFramebuffer = framebuffer;
+        SceneRenderer.Postprocess.Load(framebuffer.NumSamples);
 
         SceneRenderer.LoadRendererResources();
 
@@ -319,7 +318,7 @@ internal class RenderTestWindow : GameWindow
         }
     }
 
-    private void RenderScene(float deltaTime)
+    private void RenderScene()
     {
         Debug.Assert(SceneRenderer != null, "SceneRenderer is not loaded.");
         Debug.Assert(framebuffer is not null, "Framebuffer is not created.");

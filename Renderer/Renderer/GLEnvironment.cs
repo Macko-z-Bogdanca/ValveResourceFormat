@@ -33,6 +33,11 @@ public static class GLEnvironment
     private static ParallelShaderCompileType ParallelShaderCompileSupport = ParallelShaderCompileType.None;
 
     /// <summary>
+    /// Indicates whether indirect count draw calls are supported by the current driver.
+    /// </summary>
+    public static bool IndirectCountSupported { get; private set; }
+
+    /// <summary>
     /// Gets the GPU renderer name and driver version string.
     /// </summary>
     public static string? GpuRendererAndDriver { get; private set; }
@@ -52,6 +57,7 @@ public static class GLEnvironment
         var minor = GL.GetInteger(GetPName.MinorVersion);
         var major = GL.GetInteger(GetPName.MajorVersion);
 
+        var vendor = GL.GetString(StringName.Vendor);
         var gpu = $"GPU: {GL.GetString(StringName.Renderer)}, Driver: {GL.GetString(StringName.Version)}";
 
         GpuRendererAndDriver = gpu;
@@ -72,6 +78,9 @@ public static class GLEnvironment
             var extension = GL.GetString(StringNameIndexed.Extensions, i);
             extensions.Add(extension);
         }
+
+        // not supported on Intel integrated drivers
+        IndirectCountSupported = vendor != "Intel";
 
         if (extensions.Contains("GL_KHR_parallel_shader_compile"))
         {

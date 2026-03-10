@@ -5,6 +5,16 @@
 
 #include "instancing.slang"
 
+#define D_ANIMATED 0
+
+#if (D_ANIMATED == 0)
+    // No animation
+    mat4 getSkinMatrix()
+    {
+        return mat4(1.0);
+    }
+#else
+
 layout (location = 1) in uvec4 vBLENDINDICES;
 layout (location = 2) in vec4 vBLENDWEIGHT;
 
@@ -16,6 +26,11 @@ layout (location = 2) in vec4 vBLENDWEIGHT;
 #endif
 
 uniform uvec4 uAnimationData;
+
+layout(std430, binding = 11) readonly buffer g_boneTransformBuffer
+{
+    mat3x4 boneTransforms[];
+};
 
 #define bAnimated (uAnimationData.x != 0u)
 #define meshBoneOffset uAnimationData.y
@@ -33,7 +48,7 @@ mat4 getMatrix(uint boneIndex)
 
     boneIndex += meshBoneOffset;
 
-    return UnpackMatrix4(transforms[boneIndex]);
+    return UnpackMatrix4(boneTransforms[boneIndex]);
 }
 
 mat4 getSkinMatrix()
@@ -65,5 +80,6 @@ mat4 getSkinMatrix()
 
     return skinMatrix;
 }
+#endif // D_ANIMATED
 
 #endif

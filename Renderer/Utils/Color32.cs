@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace ValveResourceFormat.Renderer
+namespace ValveResourceFormat.Renderer.Utils
 {
     /// <summary>
     /// 32-bit RGBA color with byte component storage.
@@ -53,13 +53,7 @@ namespace ValveResourceFormat.Renderer
         /// <param name="g">Green component (0-255).</param>
         /// <param name="b">Blue component (0-255).</param>
         /// <param name="a">Alpha component (0-255).</param>
-        public Color32(byte r, byte g, byte b, byte a) : this(0)
-        {
-            R = r;
-            G = g;
-            B = b;
-            A = a;
-        }
+        public Color32(byte r, byte g, byte b, byte a) : this((uint)r | ((uint)g << 8) | ((uint)b << 16) | ((uint)a << 24)) { }
 
         /// <summary>
         /// Initializes a new color from RGBA float components.
@@ -82,6 +76,15 @@ namespace ValveResourceFormat.Renderer
         /// <param name="vector">Vector with color components (0.0-1.0).</param>
         /// <returns>The converted color.</returns>
         public static Color32 FromVector4(Vector4 vector) => new(vector.X, vector.Y, vector.Z, vector.W);
+
+        /// <summary>
+        /// Converts this color to a linear color space <see cref="Vector4"/> with components in the range [0, 1].
+        /// </summary>
+        public readonly Vector4 ToLinearColor()
+        {
+            var vectorValue = new Vector4(R, G, B, A) / 255f;
+            return new Vector4(ColorSpace.SrgbGammaToLinear(vectorValue.AsVector3()), vectorValue.W);
+        }
 
         /// <summary>
         /// Gets the color as an 8-character hex string in #RRGGBBAA format.

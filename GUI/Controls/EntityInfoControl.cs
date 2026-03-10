@@ -1,9 +1,5 @@
-using System.Linq;
 using System.Windows.Forms;
-using GUI.Types.Viewers;
 using GUI.Utils;
-using ValveResourceFormat;
-using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
 using static ValveResourceFormat.ResourceTypes.EntityLump;
 
@@ -16,6 +12,9 @@ namespace GUI.Forms
         public EntityInfoControl()
         {
             InitializeComponent();
+
+            components ??= new System.ComponentModel.Container();
+            components.Add(tabPageOutputs);
         }
 
         public EntityInfoControl(VrfGuiContext vrfGuiContext) : this()

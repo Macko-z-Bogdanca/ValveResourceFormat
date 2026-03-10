@@ -7,6 +7,9 @@ using GUI.Controls;
 using GUI.Utils;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer;
+using ValveResourceFormat.Renderer.SceneEnvironment;
+using ValveResourceFormat.Renderer.SceneNodes;
+using ValveResourceFormat.Renderer.Utils;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.ModelAnimation;
 
@@ -96,7 +99,10 @@ namespace GUI.Types.GLViewers
 
                 animationComboBoxCurrentIndex = i;
                 Debug.Assert(modelSceneNode != null);
-                modelSceneNode.SetAnimation(animation);
+                using (var lockedGL = MakeCurrent())
+                {
+                    modelSceneNode.SetAnimation(animation);
+                }
                 rootMotionCheckBox!.Enabled = animationController.ActiveAnimation?.HasMovementData() ?? false;
                 enableRootMotion = rootMotionCheckBox.Enabled && rootMotionCheckBox.Checked;
             });
@@ -169,11 +175,14 @@ namespace GUI.Types.GLViewers
                     var mesh = modelSceneNode.RenderableMeshes[0];
 
                     // check if this is a static overlay world model
-                    if (mesh.DrawCallsOverlay.Count == 1
+                    if (mesh.DrawCallsOverlay.Count > 0
                         && mesh.DrawCallsOpaque.Count == 0
                         && mesh.DrawCallsBlended.Count == 0)
                     {
-                        mesh.DrawCallsOverlay[0].Material.IsOverlay = false; // render without trying to overlay on empty space
+                        foreach (var drawCall in mesh.DrawCallsOverlay)
+                        {
+                            drawCall.Material.IsOverlay = false; // render without trying to overlay on empty space
+                        }
                     }
                 }
 
@@ -465,24 +474,12 @@ namespace GUI.Types.GLViewers
                 var moreThanSixEllipsis = coloredMaterialNames.Count > 6 ? "..." : string.Empty;
                 var allColoredMaterials = string.Join("\\#FFFFFFFF, ", coloredMaterialNames.Take(6)) + "\\#FFFFFFFF" + moreThanSixEllipsis;
 
-                static string FormatSize(int bytes)
-                {
-                    if (bytes >= 1024)
-                    {
-                        return $"{bytes / 1024.0 / 1024.0:N4} MiB";
-                    }
-                    else
-                    {
-                        return $"{bytes / 1024.0:N4} KiB";
-                    }
-                }
-
                 sb.Append(CultureInfo.InvariantCulture,
                     $"""
 
                     Mesh '{meshName}':
-                        Vertices  : {vertexTotal:N0} | {FormatSize(vertexBufferSize)}
-                        Triangles : {triangleTotal:N0} | {FormatSize(indexBufferSize)}
+                        Vertices  : {vertexTotal:N0} | {HumanReadableByteSizeFormatter.Format(vertexBufferSize)}
+                        Triangles : {triangleTotal:N0} | {HumanReadableByteSizeFormatter.Format(indexBufferSize)}
 
                     """
                 );

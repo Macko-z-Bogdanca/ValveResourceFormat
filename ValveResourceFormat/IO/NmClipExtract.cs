@@ -1,10 +1,11 @@
 using System.IO;
 using System.Linq;
 using System.Text;
-using ValveResourceFormat.IO;
+using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.ModelAnimation2;
 using ValveResourceFormat.Serialization.KeyValues;
 
-namespace ValveResourceFormat.ResourceTypes.ModelAnimation2;
+namespace ValveResourceFormat.IO;
 
 /// <summary>
 /// Extracts Source 2 animation clips to editable format.
@@ -37,12 +38,20 @@ public class NmClipExtract
         kv.AddProperty("m_sourceFilename", sourceFileName);
         kv.AddProperty("m_animationSkeletonName", clip.SkeletonName);
         // TODO: figure out additive type.
+        var isAdditive = clip.Data.GetProperty<bool>("m_bIsAdditive");
+        if (isAdditive)
+        {
+            kv.AddProperty("m_additiveType", "RelativeToFrame");
+            kv.AddProperty("m_additiveBaseFilename", "");
+            kv.AddProperty("m_additiveBaseFrame", "FirstFrame");
+            kv.AddProperty("m_nAdditiveBaseFrameIdx", 0L);
+        }
 
-        var animation = new ModelAnimation.Animation(clip);
+        var animation = new ResourceTypes.ModelAnimation.Animation(clip);
         var skeletonResource = fileLoader.LoadFileCompiled(clip.SkeletonName);
         if (skeletonResource != null)
         {
-            var skeleton = ModelAnimation.Skeleton.FromSkeletonData(((BinaryKV3)skeletonResource.DataBlock!).Data);
+            var skeleton = ResourceTypes.ModelAnimation.Skeleton.FromSkeletonData(((BinaryKV3)skeletonResource.DataBlock!).Data);
             var modelSpaceSamplingChain = clip.Data.GetArray<KVObject>("m_modelSpaceSamplingChain");
             // The array below indexes into the bone sampling chain, which in turn indexes into the skeleton bones.
             var modelSpaceBoneSamplingIndices = clip.Data.GetIntegerArray("m_modelSpaceBoneSamplingIndices");
@@ -69,13 +78,15 @@ public class NmClipExtract
         foreach (var ev in events!)
         {
             var docEventTrack = BuildDocEventBasedOnEventClass(ev, ev.GetStringProperty("_class"));
-            var startTimeSeconds = ev.GetFloatProperty("m_flStartTimeSeconds");
-            var durationSeconds = ev.GetFloatProperty("m_flDurationSeconds");
+            var startTimeObj = ev.GetSubCollection("m_flStartTime");
+            var startTimeSeconds = startTimeObj?.GetFloatProperty("m_flValue") ?? 0f;
+            var durationObj = ev.GetSubCollection("m_flDuration");
+            var durationSeconds = durationObj?.GetFloatProperty("m_flValue") ?? 0f;
             var eventList = docEventTrack!.GetArray<KVObject>("m_events")!.First();
             // Doc file event time stamps are given in frames they can be technically floats, but based on recompilation tests
             // these seem inconsistent, unless they're floored to int, then it matches up.
-            eventList.AddProperty("m_flStartTime", Math.Floor(startTimeSeconds * animation.Fps));
-            eventList.AddProperty("m_flDuration", Math.Floor(durationSeconds * animation.Fps));
+            eventList.AddProperty("m_flStartTime", Math.Floor(startTimeSeconds * animation.FrameCount));
+            eventList.AddProperty("m_flDuration", Math.Floor(durationSeconds * animation.FrameCount));
             docEventTracks.AddItem(docEventTrack);
         }
         kv.AddProperty("m_eventTracks", docEventTracks);

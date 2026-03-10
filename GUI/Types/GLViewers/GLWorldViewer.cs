@@ -8,6 +8,9 @@ using GUI.Utils;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer;
+using ValveResourceFormat.Renderer.SceneEnvironment;
+using ValveResourceFormat.Renderer.SceneNodes;
+using ValveResourceFormat.Renderer.World;
 using ValveResourceFormat.ResourceTypes;
 using static GUI.Controls.SavedCameraPositionsControl;
 using static ValveResourceFormat.Renderer.PickingTexture;
@@ -37,7 +40,6 @@ namespace GUI.Types.GLViewers
         {
             this.world = world;
             mapExternalReferences = externalReferences;
-            Scene.EnableOcclusionCulling = externalReferences != null;
         }
 
         public GLWorldViewer(VrfGuiContext vrfGuiContext, RendererContext rendererContext, WorldNode worldNode, ResourceExtRefList? externalReferences = null)
@@ -184,7 +186,8 @@ namespace GUI.Types.GLViewers
 
             if (world != null)
             {
-                LoadedWorld = new WorldLoader(world, Scene, mapExternalReferences);
+                LoadedWorld = new WorldLoader(world, Scene);
+                LoadedWorld.Load(mapExternalReferences);
 
                 if (LoadedWorld.SkyboxScene != null)
                 {
@@ -344,8 +347,18 @@ namespace GUI.Types.GLViewers
 
                     UiControl.AddCheckBox("Show Fog", Scene.FogEnabled, v => Scene.FogEnabled = v);
                     UiControl.AddCheckBox("Color Correction", Renderer.Postprocess.ColorCorrectionEnabled, v => Renderer.Postprocess.ColorCorrectionEnabled = v);
-                    UiControl.AddCheckBox("Experimental Lights", false, v => Renderer.ViewBuffer!.Data!.ExperimentalLightsEnabled = v);
                     UiControl.AddCheckBox("Occlusion Culling", Scene.EnableOcclusionCulling, (v) => Scene.EnableOcclusionCulling = v);
+                    UiControl.AddCheckBox("Gpu Culling", Scene.EnableIndirectDraws, v =>
+                    {
+                        Scene.EnableIndirectDraws = v;
+                    });
+
+                    UiControl.AddCheckBox("Depth Prepass", Scene.EnableDepthPrepass, (v) => Scene.EnableDepthPrepass = v);
+
+                    var enableLights = Scene.LightingInfo.BarnLights.Count < 40;
+                    Renderer.ViewBuffer!.Data!.ExperimentalLightsEnabled = enableLights;
+
+                    UiControl.AddCheckBox("Experimental Lights", enableLights, v => Renderer.ViewBuffer!.Data!.ExperimentalLightsEnabled = v);
 
                     AddSceneExposureSlider();
                 }

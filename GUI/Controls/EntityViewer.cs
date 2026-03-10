@@ -4,9 +4,8 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Utils;
 using SkiaSharp;
-using ValveResourceFormat.Renderer;
+using ValveResourceFormat.Renderer.Utils;
 using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization.KeyValues;
 using static ValveResourceFormat.ResourceTypes.EntityLump;
 
 namespace GUI.Types.Viewers
@@ -17,6 +16,8 @@ namespace GUI.Types.Viewers
         private readonly List<Entity> Entities = [];
         private readonly Action<Entity>? SelectEntityFunc;
         private readonly VrfGuiContext GuiContext;
+
+        private HashSet<string>? pendingIconClassnames;
 
         public static ImageList? EntityIconImageList { get; private set; }
         public static Dictionary<string, int> EntityIconCache { get; private set; } = [];
@@ -114,9 +115,25 @@ namespace GUI.Types.Viewers
                 .Where(static cn => !EntityIconLoadAttempted.Contains(cn))
                 .ToHashSet();
 
+            // defer icon loading until the control is actually shown
             if (allClassnames.Count > 0)
             {
-                Task.Factory.StartNew(() => LoadEntityIcons(allClassnames)).ContinueWith(t =>
+                pendingIconClassnames = allClassnames;
+                VisibleChanged += EntityViewer_VisibleChanged;
+            }
+
+            UpdateGrid();
+        }
+
+        private void EntityViewer_VisibleChanged(object? sender, EventArgs e)
+        {
+            if (Visible && pendingIconClassnames is { Count: > 0 } classnames)
+            {
+                // detach so the load only happens once
+                VisibleChanged -= EntityViewer_VisibleChanged;
+
+                pendingIconClassnames = null;
+                Task.Factory.StartNew(() => LoadEntityIcons(classnames)).ContinueWith(t =>
                 {
                     if (t.Exception != null)
                     {
@@ -124,8 +141,6 @@ namespace GUI.Types.Viewers
                     }
                 });
             }
-
-            UpdateGrid();
         }
 
         private void UpdateGrid()

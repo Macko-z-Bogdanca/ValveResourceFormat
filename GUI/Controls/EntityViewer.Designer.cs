@@ -19,6 +19,13 @@ partial class EntityViewer
         {
             components.Dispose();
         }
+
+        if (disposing)
+        {
+            VisibleChanged -= EntityViewer_VisibleChanged;
+            EntityInfo.OutputsGrid.CellDoubleClick -= EntityInfoGrid_CellDoubleClick;
+        }
+
         base.Dispose(disposing);
     }
 

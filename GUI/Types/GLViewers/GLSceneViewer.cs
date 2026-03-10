@@ -6,13 +6,17 @@ using GUI.Controls;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer;
+using ValveResourceFormat.Renderer.Input;
+using ValveResourceFormat.Renderer.Materials;
+using ValveResourceFormat.Renderer.SceneEnvironment;
+using ValveResourceFormat.Renderer.Utils;
 using static ValveResourceFormat.Renderer.PickingTexture;
 
 namespace GUI.Types.GLViewers
 {
     internal abstract class GLSceneViewer : GLBaseControl
     {
-        public Renderer Renderer { get; internal set; }
+        public ValveResourceFormat.Renderer.Renderer Renderer { get; internal set; }
         public UserInput Input { get; protected set; }
 
         public ValveResourceFormat.Renderer.TextRenderer TextRenderer { get; protected set; }
@@ -34,8 +38,6 @@ namespace GUI.Types.GLViewers
         private int renderModeCurrentIndex;
         private ComboBox? renderModeComboBox;
         private InfiniteGrid? baseGrid;
-        private OctreeDebugRenderer? staticOctreeRenderer;
-        private OctreeDebugRenderer? dynamicOctreeRenderer;
         protected SelectedNodeRenderer? SelectedNodeRenderer;
 
         static readonly TimeSpan FpsUpdateTimeSpan = TimeSpan.FromSeconds(0.1);
@@ -92,17 +94,8 @@ namespace GUI.Types.GLViewers
                 {
                     Renderer.LockedCullFrustum = v ? Renderer.Camera.ViewFrustum.Clone() : null;
                 });
-                UiControl.AddCheckBox("Show Static Octree", showStaticOctree, (v) =>
-                {
-                    showStaticOctree = v;
 
-                    if (showStaticOctree && staticOctreeRenderer != null)
-                    {
-                        using var lockedGl = MakeCurrent();
-
-                        staticOctreeRenderer.StaticBuild();
-                    }
-                });
+                UiControl.AddCheckBox("Show Static Octree", showStaticOctree, (v) => showStaticOctree = v);
                 UiControl.AddCheckBox("Show Dynamic Octree", showDynamicOctree, (v) => showDynamicOctree = v);
                 UiControl.AddCheckBox("Show Tool Materials", Scene.ShowToolsMaterials, (v) =>
                 {
@@ -110,6 +103,13 @@ namespace GUI.Types.GLViewers
 
                     SkyboxScene?.ShowToolsMaterials = v;
                 });
+
+                if (this is GLWorldViewer worldViewer)
+                {
+                    UiControl.AddCheckBox("Show Occluded Bounds", Scene.OcclusionDebugEnabled, (v) => Scene.OcclusionDebugEnabled = v);
+                }
+
+                UiControl.AddCheckBox("Show Render Timings", Renderer.Timings.Capture, (v) => Renderer.Timings.Capture = v);
             }
 
             base.AddUiControls();
@@ -217,8 +217,8 @@ namespace GUI.Types.GLViewers
                 Input.Camera.LookAt(bbox.Center);
             }
 
-            staticOctreeRenderer = new OctreeDebugRenderer(Scene.StaticOctree, Scene.RendererContext, false);
-            dynamicOctreeRenderer = new OctreeDebugRenderer(Scene.DynamicOctree, Scene.RendererContext, true);
+            Scene.StaticOctree.DebugRenderer = new(Scene.StaticOctree, Scene.RendererContext, false);
+            Scene.DynamicOctree.DebugRenderer = new(Scene.DynamicOctree, Scene.RendererContext, true);
         }
 
         protected abstract void LoadScene();
@@ -324,7 +324,7 @@ namespace GUI.Types.GLViewers
             GL.EndQuery(QueryTarget.TimeElapsed);
 
             TextRenderer.Load();
-            Renderer.Postprocess.Load();
+            Renderer.Postprocess.Load(NumSamples);
 
             baseGrid = new InfiniteGrid(Scene);
             SelectedNodeRenderer = new(Scene.RendererContext);
@@ -344,6 +344,15 @@ namespace GUI.Types.GLViewers
             Log.Debug(GetType().Name, $"Loading scene time: {timer.Elapsed}, shader variants: {Scene.RendererContext.ShaderLoader.ShaderCount}, materials: {Scene.RendererContext.MaterialLoader.MaterialCount}");
 
             PostSceneLoad();
+
+            if (GLNativeWindow != null)
+            {
+                // try to compile shaders?
+                Renderer.Camera.SetLocationPitchYaw(Vector3.UnitZ * 20_000f, -90, 0f);
+                Renderer.Camera.SetViewportSize(64, 64);
+                OnPaint(0f);
+                GLNativeWindow.Context.SwapBuffers();
+            }
 
             GuiContext.ClearCache();
             GuiContext.GLPostLoadAction?.Invoke(this);
@@ -425,6 +434,7 @@ namespace GUI.Types.GLViewers
             Debug.Assert(Picker != null);
             Debug.Assert(SelectedNodeRenderer != null);
 
+            Renderer.Timings.MarkFrameBegin();
             GL.BeginQuery(QueryTarget.TimeElapsed, frametimeQuery1);
 
             var renderContext = new Scene.RenderContext
@@ -472,14 +482,19 @@ namespace GUI.Types.GLViewers
             {
                 SelectedNodeRenderer.Render();
 
-                if (showStaticOctree && staticOctreeRenderer != null)
+                if (showStaticOctree && Scene.StaticOctree.DebugRenderer != null)
                 {
-                    staticOctreeRenderer.Render();
+                    Scene.StaticOctree.DebugRenderer.Render();
                 }
 
-                if (showDynamicOctree && dynamicOctreeRenderer != null)
+                if (showDynamicOctree && Scene.DynamicOctree.DebugRenderer != null)
                 {
-                    dynamicOctreeRenderer.Render();
+                    Scene.DynamicOctree.DebugRenderer.Render();
+                }
+
+                if (Scene.OcclusionDebugEnabled && Scene.OcclusionDebug != null)
+                {
+                    Scene.OcclusionDebug.Render();
                 }
 
                 if (ShowBaseGrid && baseGrid != null)
@@ -557,7 +572,7 @@ namespace GUI.Types.GLViewers
                     Scale = 14f,
                     Color = new Color32(0, 150, 255),
                     Text = "* MOVEMENT IS EXPERIMENTAL. EXPECT BUGS. HELP US IMPROVE IT. *",
-                    CenterVertical = true,
+                    CenterHorizontal = true,
                 }, Renderer.Camera);
 
                 TextRenderer.AddTextRelative(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
@@ -567,12 +582,19 @@ namespace GUI.Types.GLViewers
                     Scale = 12f,
                     Color = Color32.Yellow,
                     Text = $"Speed: {Input.Velocity.AsVector2().Length():0.0} u/s",
-                    CenterVertical = true,
+                    CenterHorizontal = true,
                 }, Renderer.Camera);
+            }
+
+            if (Renderer.Timings.Capture)
+            {
+                Renderer.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
             }
 
             TextRenderer.Render(Renderer.Camera);
             Picker?.TriggerEventIfAny();
+
+            Renderer.Timings.MarkFrameEnd();
         }
 
         protected void AddBaseGridControl()
@@ -711,13 +733,6 @@ namespace GUI.Types.GLViewers
         {
             Scene.SetEnabledLayers(layers);
             SkyboxScene?.SetEnabledLayers(layers);
-
-            if (showStaticOctree && staticOctreeRenderer != null)
-            {
-                using var lockedGl = MakeCurrent();
-
-                staticOctreeRenderer.Rebuild();
-            }
         }
 
         private void SetRenderMode(string renderMode)
@@ -728,6 +743,8 @@ namespace GUI.Types.GLViewers
             Renderer.ViewBuffer!.Data!.RenderMode = RenderModes.GetShaderId(renderMode);
 
             Renderer.Postprocess.Enabled = Renderer.ViewBuffer.Data.RenderMode == 0;
+
+            Scene.EnableCompaction = renderMode != "Meshlets";
 
             Picker.SetRenderMode(renderMode);
             SelectedNodeRenderer.SetRenderMode(renderMode);

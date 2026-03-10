@@ -49,7 +49,7 @@ namespace ValveResourceFormat.Renderer
             /// <summary>
             /// Gets or sets whether an occlusion query has been submitted for this node.
             /// </summary>
-            public bool OcculsionQuerySubmitted { get; set; }
+            public bool OcclusionQuerySubmitted { get; set; }
 
             /// <summary>
             /// Gets or sets whether this node is occluded by other geometry.
@@ -250,7 +250,7 @@ namespace ValveResourceFormat.Renderer
                 }
 
                 FrustumCulled = false;
-                OcculsionQuerySubmitted = false;
+                OcclusionQuerySubmitted = false;
                 OcclusionCulled = false;
             }
 
@@ -321,6 +321,34 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
+            /// <summary>Queries scene nodes visible within the specified view frustum, ignoring occlusion culling results.</summary>
+            /// <param name="frustum">View frustum to test against.</param>
+            /// <param name="results">List to populate with visible scene nodes.</param>
+            public void QueryNoOcclusion(Frustum frustum, List<SceneNode> results)
+            {
+                if (HasElements)
+                {
+                    foreach (var element in Elements!)
+                    {
+                        if (frustum.Intersects(element.BoundingBox))
+                        {
+                            results.Add(element);
+                        }
+                    }
+                }
+
+                if (HasChildren)
+                {
+                    foreach (var child in Children)
+                    {
+                        if (frustum.Intersects(child.Region))
+                        {
+                            child.QueryNoOcclusion(frustum, results);
+                        }
+                    }
+                }
+            }
+
             /// <summary>
             /// Calculates the combined bounding box of all elements in this node and its children.
             /// </summary>
@@ -356,18 +384,33 @@ namespace ValveResourceFormat.Renderer
         /// <summary>
         /// Gets the root node of the octree.
         /// </summary>
-        public Node Root { get; }
+        public Node Root { get; private set; }
+
+        /// <summary>
+        /// Gets or sets whether this octree needs to be rebuilt.
+        /// </summary>
+        public bool Dirty { get; set; } = true;
+
+        /// <summary>Gets or sets an optional debug renderer that visualizes this octree.</summary>
+        public OctreeDebugRenderer? DebugRenderer { get; set; }
 
         /// <summary>
         /// Initializes a new octree with the specified size.
         /// </summary>
         /// <param name="size">Total size of the octree region (centered at origin).</param>
-        /// <exception cref="ArgumentOutOfRangeException">Thrown if <paramref name="size"/> is negative or zero.</exception>
         public Octree(float size)
+            : this(new AABB(Vector3.Zero, size / 2f))
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(size);
+        }
 
-            Root = new Node(null, new Vector3(-size * 0.5f), new Vector3(size));
+        /// <summary>
+        /// Initializes a new octree with the specified bounding box as the largest region.
+        /// </summary>
+        public Octree(AABB size)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(size.Size.Length());
+
+            Root = new Node(null, size.Min, size.Size);
         }
 
         /// <summary>
@@ -453,6 +496,21 @@ namespace ValveResourceFormat.Renderer
         public void Clear()
         {
             Root.Clear();
+        }
+
+
+        /// <summary>
+        /// Clears all nodes and roughly sizes root to the specified bounds.
+        /// </summary>
+        public void Clear(AABB rootBounds)
+        {
+            Clear();
+
+            var min = Vector3.Max(-new Vector3(16384), rootBounds.Min);
+            var max = Vector3.Min(new Vector3(16384), rootBounds.Max);
+
+            max = new Vector3(max.Length());
+            Root = new Node(null, min, max - min);
         }
     }
 }
