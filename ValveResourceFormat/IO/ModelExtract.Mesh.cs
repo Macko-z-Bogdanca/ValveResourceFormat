@@ -471,11 +471,11 @@ partial class ModelExtract
             {
                 var vertexBuffers = drawCall.GetArray("m_vertexBuffers");
 
-                Debug.Assert(vertexBuffers.Length <= 2); // Hello traveler, if you are here to update this code to support more than 2 buffers!
+                Debug.Assert(vertexBuffers.Count <= 2); // Hello traveler, if you are here to update this code to support more than 2 buffers!
 
                 var dmeVertexBufferKey = (
                     vertexBuffers[0].GetInt32Property("m_hBuffer"),
-                    vertexBuffers.Length > 1 ? vertexBuffers[1].GetInt32Property("m_hBuffer") : -1
+                    vertexBuffers.Count > 1 ? vertexBuffers[1].GetInt32Property("m_hBuffer") : -1
                 );
 
                 if (!dmeVertexBuffers.TryGetValue(dmeVertexBufferKey, out var dmeVertexBuffer))
@@ -488,7 +488,7 @@ partial class ModelExtract
                 var indexBufferIndex = indexBufferInfo.GetInt32Property("m_hBuffer");
                 ReadOnlySpan<int> indexBuffer = indexBuffers[indexBufferIndex].Value;
 
-                var material = drawCall.GetProperty<string>("m_material") ?? drawCall.GetProperty<string>("m_pMaterial");
+                var material = drawCall.GetStringProperty("m_material") ?? drawCall.GetStringProperty("m_pMaterial");
 
                 if (material != null && options.MaterialInputSignatures != null && (materialInputSignature.Elements == null || materialInputSignature.Elements.Length == 0))
                 {

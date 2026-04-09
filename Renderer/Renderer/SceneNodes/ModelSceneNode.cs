@@ -5,6 +5,8 @@ using System.Runtime.InteropServices;
 using ValveResourceFormat.Renderer.Buffers;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.ModelAnimation;
+using ValveResourceFormat.ResourceTypes.ModelAnimation2;
+using ValveResourceFormat.ResourceTypes.ModelData.Attachments;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.Renderer.SceneNodes
@@ -38,6 +40,16 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>Gets the animation controller managing skeletal pose and flex data for this model.</summary>
         public AnimationController AnimationController { get; }
 
+        /// <summary>
+        /// A collection of animations available for sequential playback on this model.
+        /// </summary>
+        public Dictionary<string, Animation> Animations { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Attachment points from model data.
+        /// </summary>
+        public Dictionary<string, Attachment> Attachments { get; }
+
         /// <summary>Gets the name of the currently active material group (skin).</summary>
         public string ActiveMaterialGroup => activeMaterialGroup.Name;
 
@@ -45,7 +57,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         public bool HasMeshes => meshRenderers.Count > 0;
 
         private readonly List<RenderableMesh> meshRenderers = [];
-        private readonly List<Animation> animations = [];
 
         /// <summary>Gets whether this model has an active GPU bone matrix buffer (i.e., has animations loaded).</summary>
         public bool IsAnimated => boneMatricesGpu != null;
@@ -59,7 +70,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private readonly (string Name, string[] Materials)[] materialGroups;
         private readonly string[] meshGroups;
-        private readonly ulong[]? meshGroupMasks;
+        private readonly long[]? meshGroupMasks;
         private readonly List<(int MeshIndex, string MeshName, long LoDMask)> meshNamesForLod1;
 
         /// <summary>
@@ -77,7 +88,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             if (meshGroups.Length > 1)
             {
-                meshGroupMasks = model.Data.GetUnsignedIntegerArray("m_refMeshGroupMasks");
+                meshGroupMasks = model.Data.GetIntegerArray("m_refMeshGroupMasks");
             }
 
             meshNamesForLod1 = model.GetReferenceMeshNamesAndLoD().Where(m => (m.LoDMask & 1) != 0).ToList();
@@ -86,12 +97,39 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             boneCount = model.Skeleton.Bones.Length;
             remappingTable = model.Data.GetIntegerArray("m_remappingTable").Select(i => (int)i).ToArray();
 
+            if (model.Data.GetArray<string>("m_vecNmSkeletonRefs") is { Length: > 0 } nmSkelRefs)
+            {
+                foreach (var skeletonName in nmSkelRefs)
+                {
+                    var resource = Scene.RendererContext.FileLoader.LoadFileCompiled(skeletonName);
+                    if (resource?.DataBlock is not BinaryKV3 skeletonData)
+                    {
+                        continue;
+                    }
+
+                    var skeleton = Skeleton.FromSkeletonData(skeletonData.Data);
+                    AnimationController.RegisterExternalSkeleton(skeletonName, skeleton);
+                }
+
+                var animGraphs = model.Data.GetArray("m_animGraph2Refs");
+
+                // just in case there is any recursive or duplicate references
+                var visitedResources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var animGraphRef in animGraphs)
+                {
+                    var graphName = animGraphRef.GetStringProperty("m_hGraph");
+                    LoadAnimGraphResources(graphName, visitedResources);
+                }
+            }
+
             if (skin != null)
             {
                 SetMaterialGroup(skin);
             }
 
             Name = model.Name;
+            Attachments = model.Attachments;
 
             LoadMeshes(model);
             UpdateBoundingBox();
@@ -310,15 +348,88 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private void LoadAnimations(Model model, bool embeddedAnimationsOnly)
         {
-            animations.AddRange(embeddedAnimationsOnly
+            var animations = (embeddedAnimationsOnly
                 ? model.GetEmbeddedAnimations()
-                : model.GetAllAnimations(Scene.RendererContext.FileLoader)
-            );
+                : model.GetAllAnimations(Scene.RendererContext.FileLoader)).ToList();
 
-            if (animations.Count != 0)
+            Animations.EnsureCapacity(animations.Count);
+            foreach (var anim in animations)
+            {
+                Animations[anim.Name] = anim;
+            }
+
+            if (Animations.Count != 0)
             {
                 SetupBoneMatrixBuffers();
             }
+        }
+
+        /// <summary>
+        /// Loads an animgraph2 clip from the given <see cref="AnimationClip"/> instance and makes it available for playback on this model.
+        /// </summary>
+        public void LoadAnimationClip(AnimationClip clip)
+        {
+            var anim = new Animation(clip);
+            Animations[anim.Name] = anim;
+        }
+
+        /// <summary>
+        /// Loads an animgraph2 clip from the file system and makes it available for playback on this model.
+        /// </summary>
+        /// <param name="clipName">Clip resource name.</param>
+        /// <returns><see langword="true"/> if the clip was found and loaded; otherwise <see langword="false"/>.</returns>
+        public bool LoadAnimationClip(string clipName)
+        {
+            if (!clipName.EndsWith(".vnmclip", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException($"Clip must be a {ResourceType.NmClip} resource.", nameof(clipName));
+            }
+
+            var clipResource = Scene.RendererContext.FileLoader.LoadFileCompiled(clipName);
+            if (clipResource?.DataBlock is not AnimationClip clip)
+            {
+                return false;
+            }
+
+            LoadAnimationClip(clip);
+            return true;
+        }
+
+        private bool LoadAnimGraphResources(string graphName, HashSet<string> visited)
+        {
+            var resource = Scene.RendererContext.FileLoader.LoadFileCompiled(graphName);
+            if (resource?.DataBlock is not BinaryKV3 graphData)
+            {
+                return false;
+            }
+
+            var graphResources = graphData.Data.Root.GetArray<string>("m_resources");
+            if (graphResources == null)
+            {
+                return false;
+            }
+
+            var clipExt = ResourceType.NmClip.GetExtension()!;
+            var graphExt = ResourceType.NmGraph.GetExtension()!;
+
+            foreach (var graphResource in graphResources)
+            {
+                if (!visited.Add(graphResource))
+                {
+                    continue;
+                }
+
+                if (graphResource.EndsWith(clipExt, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadAnimationClip(graphResource);
+                }
+                else if (graphResource.EndsWith(graphExt, StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadAnimGraphResources(graphResource, visited);
+                }
+            }
+
+            return true;
         }
 
         private void LoadMeshes(Model model)
@@ -361,14 +472,10 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             boneMatricesGpu = new StorageBuffer(ReservedBufferSlots.BoneTransforms);
         }
 
-        /// <summary>Returns the names of all animations available on this model.</summary>
-        public IEnumerable<string> GetSupportedAnimationNames()
-            => animations.Select(a => a.Name);
-
         /// <summary>Activates the animation with the given name, or stops animation if not found.</summary>
-        public void SetAnimation(string animationName)
+        public void SetAnimationByName(string animationName)
         {
-            var activeAnimation = animations.FirstOrDefault(a => a.Name == animationName);
+            Animations.TryGetValue(animationName, out var activeAnimation);
             SetAnimation(activeAnimation);
         }
 
@@ -382,7 +489,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             if (animationName != null)
             {
-                activeAnimation = animations.FirstOrDefault(a => a.Name == animationName);
+                Animations.TryGetValue(animationName, out activeAnimation);
             }
 
             // TODO: CS2 falls back to the first animation, but other games seemingly do not.
@@ -407,7 +514,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             {
                 foreach (var renderer in meshRenderers)
                 {
-                    renderer.SetMaterialCombo(("D_ANIMATED", 1));
+                    // renderer.SetMaterialCombo(("D_ANIMATED", 1));
                     renderer.SetBoneMatricesBuffer(boneMatricesGpu);
                 }
             }
@@ -415,10 +522,43 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             {
                 foreach (var renderer in meshRenderers)
                 {
-                    renderer.SetMaterialCombo(("D_ANIMATED", 0));
+                    // renderer.SetMaterialCombo(("D_ANIMATED", 0));
                     renderer.SetBoneMatricesBuffer(null);
                 }
             }
+        }
+
+        /// <summary>
+        /// Gets the world transform for the specified attachment point.
+        /// </summary>
+        public Matrix4x4 GetAttachmentTransform(string attachmentName)
+        {
+            var transform = Matrix4x4.Identity;
+
+            var attachment = Attachments.GetValueOrDefault(attachmentName);
+            if (attachment != null)
+            {
+                for (var i = 0; i < attachment.Length; i++)
+                {
+                    var influence = attachment[i];
+                    var boneIndex = AnimationController.FrameCache.Skeleton.GetBoneIndex(influence.Name);
+                    if (boneIndex != -1)
+                    {
+                        var boneTransform = AnimationController.Pose[boneIndex];
+                        var influenceTransform = Matrix4x4.CreateFromQuaternion(influence.Rotation) * Matrix4x4.CreateTranslation(influence.Offset);
+                        transform *= Matrix4x4.Lerp(Matrix4x4.Identity, influenceTransform * boneTransform, influence.Weight);
+                    }
+                }
+
+                if (attachment.IgnoreRotation)
+                {
+                    var scale = transform.M22;
+                    var translation = transform.Translation;
+                    transform = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateTranslation(translation);
+                }
+            }
+
+            return transform * Transform;
         }
 
 #pragma warning disable CA1024 // Use properties where appropriate
@@ -445,7 +585,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             var groupIndex = Array.IndexOf(meshGroups, groupName);
             if (groupIndex >= 0)
             {
-                return meshGroupMasks.Select(mask => (mask & 1UL << groupIndex) != 0);
+                return meshGroupMasks.Select(mask => (mask & 1L << groupIndex) != 0);
             }
             else
             {

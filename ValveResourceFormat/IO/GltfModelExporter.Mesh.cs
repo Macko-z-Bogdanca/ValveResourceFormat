@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using SharpGLTF.Memory;
 using SharpGLTF.Schema2;
+using ValveKeyValue;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Serialization.KeyValues;
 using VMaterial = ValveResourceFormat.ResourceTypes.Material;
@@ -308,13 +309,32 @@ public partial class GltfModelExporter
 
         var vertexBuffers = drawCall.GetArray("m_vertexBuffers");
 
+        // Each vertex buffer names its TEXCOORDs/COLORs from 0 independently, so remap to a
+        // global counter here to avoid later buffers overwriting earlier ones on the primitive.
+        var texcoordCounter = 0;
+        var colorCounter = 0;
+
         foreach (var vertexBufferInfo in vertexBuffers)
         {
             var vertexBufferIndex = vertexBufferInfo.GetInt32Property("m_hBuffer");
 
             foreach (var (attributeKey, accessor) in vertexBufferAccessors[vertexBufferIndex])
             {
-                primitive.SetVertexAccessor(attributeKey, accessor);
+                string key;
+                if (attributeKey.StartsWith("TEXCOORD_", StringComparison.Ordinal))
+                {
+                    key = $"TEXCOORD_{texcoordCounter++}";
+                }
+                else if (attributeKey.StartsWith("COLOR_", StringComparison.Ordinal))
+                {
+                    key = $"COLOR_{colorCounter++}";
+                }
+                else
+                {
+                    key = attributeKey;
+                }
+
+                primitive.SetVertexAccessor(key, accessor);
 
                 DebugValidateGLTF();
             }
@@ -360,7 +380,7 @@ public partial class GltfModelExporter
             modelTintColor *= dcTintColorWithAlpha;
         }
 
-        var materialPath = skinMaterialPath ?? drawCall.GetProperty<string>("m_material") ?? drawCall.GetProperty<string>("m_pMaterial");
+        var materialPath = skinMaterialPath ?? drawCall.GetStringProperty("m_material") ?? drawCall.GetStringProperty("m_pMaterial");
 
         var materialNameTrimmed = Path.GetFileNameWithoutExtension(materialPath);
         var materialHashKey = new ExportedMaterial(materialPath, modelTintColor);
@@ -445,7 +465,7 @@ public partial class GltfModelExporter
         var aggregateMeshes = aggregateSceneObject.GetArray("m_aggregateMeshes");
 
         // Aperture Desk Job goes from draw call -> aggregate mesh
-        if (aggregateMeshes.Length > 0 && !aggregateMeshes[0].ContainsKey("m_nDrawCallIndex"))
+        if (aggregateMeshes.Count > 0 && !aggregateMeshes[0].ContainsKey("m_nDrawCallIndex"))
         {
             return false;
         }
@@ -457,7 +477,7 @@ public partial class GltfModelExporter
         var fragmentTransforms = aggregateSceneObject.GetArray("m_fragmentTransforms");
 
         var meshSceneObjects = vmesh.Data.GetArray("m_sceneObjects");
-        var drawCalls = new List<KVObject>(meshSceneObjects.Length);
+        var drawCalls = new List<KVObject>(meshSceneObjects.Count);
 
         foreach (var meshSceneObject in meshSceneObjects)
         {
@@ -474,7 +494,7 @@ public partial class GltfModelExporter
             var drawCall = drawCalls[drawCallIndex];
             var transform = Matrix4x4.Identity;
 
-            if (fragmentData.GetProperty<bool>("m_bHasTransform") == true)
+            if (fragmentData.GetBooleanProperty("m_bHasTransform") == true)
             {
                 transform *= fragmentTransforms[transformIndex++].ToMatrix4x4();
 

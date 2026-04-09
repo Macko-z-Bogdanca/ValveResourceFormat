@@ -248,7 +248,7 @@ namespace GUI.Types.PackageViewer
 
                         if (!File.Exists(file))
                         {
-                            Log.Warn(nameof(PackageViewer), $"Faield to find file: {file}");
+                            Log.Warn(nameof(PackageViewer), $"Failed to find file: {file}");
                             continue;
                         }
                     }
@@ -673,7 +673,7 @@ namespace GUI.Types.PackageViewer
 
             if (sender is Control senderControl)
             {
-                Program.MainForm.ShowVpkContextMenu(senderControl, e.Location, isRoot, isFolder);
+                Program.MainForm.ShowVpkContextMenu(senderControl, e.Location, isRoot, isFolder, TreeView.DeletedFilesRecovered);
             }
         }
 

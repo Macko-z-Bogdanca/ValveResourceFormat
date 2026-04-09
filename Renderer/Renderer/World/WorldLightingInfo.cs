@@ -116,11 +116,12 @@ namespace ValveResourceFormat.Renderer.World
             (2048f, 256),
         ];
 
+        private const int OmniShadowBorder = 2;
         private readonly BarnLightConstants[] BinnedBarnLightGpuData = new BarnLightConstants[BarnLightConstants.MAX_BARN_LIGHTS];
         private readonly List<ShadowRequest> ShadowRequests = [];
         private readonly ShadowAtlasPacker ShadowAtlas = new(64);
 
-        private Dictionary<string, int>? BarnLightCookiePaths;
+        private Dictionary<string, int> BarnLightCookiePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
         private StorageBuffer? BarnLightStorageBuffer;
         /// <summary>Gets the list of shadow casters produced by the most recent <see cref="BinBarnLights"/> call.</summary>
         public List<BinnedShadowCaster> BinnedShadowCasters { get; } = [];
@@ -203,6 +204,11 @@ namespace ValveResourceFormat.Renderer.World
         /// <param name="lightProbe">The light probe to add.</param>
         public void AddProbe(SceneLightProbe lightProbe)
         {
+            if (scene.LightingInfo.LightmapVersionNumber == 0)
+            {
+                return;
+            }
+
             var validTextureSet = (scene.LightingInfo.LightmapGameVersionNumber, lightProbe) switch
             {
                 (_, { Irradiance: null }) => false,
@@ -299,23 +305,26 @@ namespace ValveResourceFormat.Renderer.World
                 LightingData.LightFallOff[index] = new Vector4(light.FallOff, light.Range, light.AttenuationLinear, light.AttenuationQuadratic);
             }
 
-            var currentLightIndex = 0u;
+            var staticLights = lights.Where(l => l.StationaryLightIndex >= 0).OrderBy(l => l.StationaryLightIndex).ToList();
+            var dynamicLights = lights.Where(l => l.StationaryLightIndex == -1).ToList();
 
-            foreach (var light in lights.Where(l => l.StationaryLightIndex >= 0).OrderBy(l => l.StationaryLightIndex))
+            foreach (var light in staticLights)
             {
-                currentLightIndex = (uint)light.StationaryLightIndex;
+                var index = (uint)light.StationaryLightIndex;
 
-                if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
+                if (index >= LightingConstants.MAX_LIGHTS)
                 {
                     continue;
                 }
 
-                AddLight(light, (uint)light.StationaryLightIndex);
+                AddLight(light, index);
+
+                LightingData.StaticLightCount = index + 1;
             }
 
-            LightingData.NumLights[0] = currentLightIndex + 1;
+            var currentLightIndex = LightingData.StaticLightCount;
 
-            foreach (var light in lights.Where(l => l.StationaryLightIndex == -1))
+            foreach (var light in dynamicLights)
             {
                 if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
                 {
@@ -326,7 +335,15 @@ namespace ValveResourceFormat.Renderer.World
                 AddLight(light, currentLightIndex++);
             }
 
-            LightingData.NumLights[1] = currentLightIndex;
+            LightingData.DynamicLightCount = currentLightIndex;
+
+            var envLight = lights.FirstOrDefault(l => l.Entity == SceneLight.EntityType.Environment);
+            if (envLight != null)
+            {
+                LightingData.LightToWorld[0] = envLight.Transform;
+                LightingData.LightPosition_Type[0] = new Vector4(envLight.Position, (int)envLight.Type);
+                LightingData.LightColor_Brightness[0] = new Vector4(ColorSpace.SrgbGammaToLinear(envLight.Color), envLight.Brightness);
+            }
         }
 
         /// <summary>
@@ -335,30 +352,19 @@ namespace ValveResourceFormat.Renderer.World
         /// <param name="lights">The list of scene lights to store.</param>
         public void StoreLightMappedLights_V2(List<SceneLight> lights)
         {
-            // This loop is required for environment (sun) lights.
-            // I don't know if there can be multiple instances, but just to be safe
-            var envCount = 0u;
-            foreach (var light in lights)
+            var envLight = lights.FirstOrDefault(l => l.Entity == SceneLight.EntityType.Environment);
+
+            if (envLight != null)
             {
-                if (light.Entity != SceneLight.EntityType.Environment)
-                {
-                    continue;
-                }
+                LightingData.LightPosition_Type[0] = new Vector4(envLight.Position, (int)envLight.Type);
+                LightingData.LightDirection_InvRange[0] = new Vector4(envLight.Direction, 1.0f / envLight.Range);
+                LightingData.LightToWorld[0] = envLight.Transform;
+                LightingData.LightColor_Brightness[0] = new Vector4(ColorSpace.SrgbGammaToLinear(envLight.Color), envLight.Brightness);
+                LightingData.LightFallOff[0] = new Vector4(envLight.FallOff, envLight.Range, 0.0f, 0.0f);
+                LightingData.SunLightBakedShadowMask = envLight.BakedShadowMask;
 
-                if (envCount >= LightingConstants.MAX_LIGHTS)
-                {
-                    break;
-                }
-
-                LightingData.LightPosition_Type[envCount] = new Vector4(light.Position, (int)light.Type);
-                LightingData.LightDirection_InvRange[envCount] = new Vector4(light.Direction, 1.0f / light.Range);
-                LightingData.LightToWorld[envCount] = light.Transform;
-                LightingData.LightColor_Brightness[envCount] = new Vector4(ColorSpace.SrgbGammaToLinear(light.Color), light.Brightness);
-                LightingData.LightFallOff[envCount] = new Vector4(light.FallOff, light.Range, 0.0f, 0.0f);
-                envCount++;
+                LightingData.StaticLightCount = 1;
             }
-
-            LightingData.NumLightsBakedShadowIndex[0] = envCount;
 
             LightingData.NumBarnLights = 0; // changed dynamically
 
@@ -427,7 +433,7 @@ namespace ValveResourceFormat.Renderer.World
                     light.IsDirty = false;
                 }
 
-                if (light.BarnFaces is null)
+                if (!light.IsVisible)
                 {
                     continue;
                 }
@@ -440,7 +446,9 @@ namespace ValveResourceFormat.Renderer.World
                     var distance = Vector3.Distance(cameraPosition, light.Position);
                     (w, h) = ApplyDistanceCap(w, h, distance);
 
-                    // Only submit shadows if all faces can be rendered
+                    w = Math.Max(w, 64);
+                    h = Math.Max(h, 64);
+
                     if (ShadowRequests.Count + light.BarnFaces.Length > ShadowAtlas.MaxShadowMaps)
                     {
                         continue;
@@ -448,9 +456,10 @@ namespace ValveResourceFormat.Renderer.World
 
                     light.WillDrawShadows = true;
 
+                    var border = light.Entity == SceneLight.EntityType.Omni2 ? OmniShadowBorder * 2 : 0;
                     for (var i = 0; i < light.BarnFaces.Length; i++)
                     {
-                        ShadowRequests.Add(new ShadowRequest(w, h));
+                        ShadowRequests.Add(new ShadowRequest(w + border, h + border));
                     }
                 }
             }
@@ -465,7 +474,7 @@ namespace ValveResourceFormat.Renderer.World
                     continue;
                 }
 
-                if (light.BarnFaces is null)
+                if (!light.IsVisible)
                 {
                     continue;
                 }
@@ -491,10 +500,19 @@ namespace ValveResourceFormat.Renderer.World
 
                         if (region.IsValid)
                         {
-                            var atlasScale = new Vector2(region.Width, region.Height) / BarnLightShadowAtlasSize;
-                            var atlasOffset = new Vector2(region.X, region.Y) / BarnLightShadowAtlasSize;
-                            var bakedScale = atlasScale * 0.5f;
-                            var bakedOffset = atlasOffset + bakedScale;
+                            var shadowMatrix = face.WorldToFrustum;
+                            var bakedScale = new Vector2(region.Width, region.Height) / BarnLightShadowAtlasSize * 0.5f;
+                            var bakedOffset = new Vector2(region.X + region.Width / 2f, region.Y + region.Height / 2f) / BarnLightShadowAtlasSize;
+
+                            if (light.Entity == SceneLight.EntityType.Omni2)
+                            {
+                                var shrink = new Vector2(
+                                    (float)(region.Width - OmniShadowBorder * 2) / region.Width,
+                                    (float)(region.Height - OmniShadowBorder * 2) / region.Height
+                                );
+                                bakedScale *= shrink;
+                                shadowMatrix *= Matrix4x4.CreateScale(shrink.X, shrink.Y, 1f);
+                            }
 
                             data.BarnLightShadowOffsetScale = new Vector4(
                                 bakedOffset.X, bakedOffset.Y,
@@ -504,7 +522,7 @@ namespace ValveResourceFormat.Renderer.World
 
                             BinnedShadowCasters.Add(new BinnedShadowCaster
                             {
-                                WorldToFrustum = face.WorldToFrustum,
+                                WorldToFrustum = shadowMatrix,
                                 Region = region,
                                 Light = light,
                                 FaceIndex = faceIndex,
@@ -546,10 +564,10 @@ namespace ValveResourceFormat.Renderer.World
             BarnLightCookieAtlas?.Delete();
             BarnLightCookieAtlas = null;
 
-            BarnLightCookiePaths = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            BarnLightCookiePaths.Clear();
             var cookieTextures = new List<RenderTexture>();
 
-            foreach (var light in BarnLights!)
+            foreach (var light in BarnLights)
             {
                 if (light.CookieTexturePath != null && BarnLightCookiePaths.TryAdd(light.CookieTexturePath, cookieTextures.Count + 1))
                 {
@@ -620,7 +638,7 @@ namespace ValveResourceFormat.Renderer.World
         /// <summary>Allocates the GPU storage buffer used to pass barn light data to shaders.</summary>
         public void CreateBarnLightBuffer()
         {
-            BarnLightStorageBuffer = StorageBuffer.Allocate<BarnLightConstants>(
+            BarnLightStorageBuffer ??= StorageBuffer.Allocate<BarnLightConstants>(
                 ReservedBufferSlots.BarnLights, BarnLightConstants.MAX_BARN_LIGHTS, BufferUsageHint.DynamicDraw);
         }
 

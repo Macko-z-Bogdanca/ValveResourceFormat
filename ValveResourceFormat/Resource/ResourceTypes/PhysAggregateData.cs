@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq;
+using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics;
 using ValveResourceFormat.Serialization.KeyValues;
 
@@ -8,6 +9,7 @@ namespace ValveResourceFormat.ResourceTypes
     /// <summary>
     /// Represents physics aggregate data containing collision shapes and properties.
     /// </summary>
+    /// <seealso href="https://s2v.app/SchemaExplorer/cs2/modellib/VPhysXAggregateData_t">VPhysXAggregateData_t</seealso>
     public class PhysAggregateData : KeyValuesOrNTRO
     {
         /// <summary>
@@ -20,9 +22,9 @@ namespace ValveResourceFormat.ResourceTypes
         /// Gets the bind pose transformation matrices.
         /// </summary>
         public Matrix4x4[] BindPose
-           => Data.GetArray("m_bindPose")
-                .Select(v => Matrix4x4FromArray(v
-                    .Select(m => Convert.ToSingle(m.Value, CultureInfo.InvariantCulture))
+           => bindPose ??= Data.GetArray("m_bindPose")
+                .Select(v => Matrix4x4FromArray(v.Children.Select(c => c.Value)
+                    .Select(m => Convert.ToSingle(m, CultureInfo.InvariantCulture))
                     .ToArray()))
                 .ToArray();
 
@@ -36,15 +38,18 @@ namespace ValveResourceFormat.ResourceTypes
         /// Gets the surface property hashes for collision materials.
         /// </summary>
         public uint[] SurfacePropertyHashes
-            => Data.GetArray<object>("m_surfacePropertyHashes").Select(Convert.ToUInt32).ToArray();
+            => surfacePropertyHashes ??= Data.GetArray<object>("m_surfacePropertyHashes").Select(Convert.ToUInt32).ToArray();
 
         /// <summary>
         /// Gets the collision attributes.
         /// </summary>
         public IReadOnlyList<KVObject> CollisionAttributes
-            => Data.GetArray("m_collisionAttributes");
+            => collisionAttributes ??= Data.GetArray("m_collisionAttributes");
 
+        private Matrix4x4[]? bindPose;
         private Part[]? parts;
+        private uint[]? surfacePropertyHashes;
+        private IReadOnlyList<KVObject>? collisionAttributes;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PhysAggregateData"/> class.

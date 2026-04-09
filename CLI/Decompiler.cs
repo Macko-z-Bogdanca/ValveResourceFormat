@@ -1256,13 +1256,17 @@ namespace CLI
                 {
                     if (manifestData.TryGetValue(filePath, out var oldCrc32) && oldCrc32 == file.CRC32)
                     {
+                        Console.WriteLine("--- Skipped (unchanged) \"{0}\"", filePath);
                         continue;
                     }
 
                     manifestData[filePath] = file.CRC32;
                 }
 
-                Console.WriteLine("\t[archive index: {0:D3}] {1}", file.ArchiveIndex, filePath);
+                if (OutputFile == null)
+                {
+                    Console.WriteLine("\t[archive index: {0:D3}] {1}", file.ArchiveIndex, filePath);
+                }
 
                 var totalLength = (int)file.TotalLength;
                 var rawFileData = ArrayPool<byte>.Shared.Rent(totalLength);
@@ -1305,6 +1309,7 @@ namespace CLI
                             // Only parse the highest SM of features files
                             if (!highestShaderModelFeatures!.Contains(filePath))
                             {
+                                Console.WriteLine("--- Skipped (not highest shader model) \"{0}\"", filePath);
                                 continue;
                             }
 
@@ -1334,6 +1339,8 @@ namespace CLI
                                 Directory.CreateDirectory(Path.GetDirectoryName(outputFile)!);
 
                                 gltfExporter.Export(resource, outputFile);
+
+                                Console.WriteLine("--- Dump written to \"{0}\"", outputFile);
 
                                 continue;
                             }
@@ -1528,7 +1535,7 @@ namespace CLI
                     }
                     else if (resource.GetBlockByType(BlockType.CTRL) is BinaryKV3 ctrlData)
                     {
-                        info = ctrlData.Data.GetStringProperty("_class");
+                        info = ctrlData.Data.Root.GetStringProperty("_class");
                     }
 
                     break;
@@ -1543,7 +1550,7 @@ namespace CLI
 
                         foreach (var entity in entities)
                         {
-                            foreach (var property in entity.Properties)
+                            foreach (var property in entity.Children)
                             {
                                 if (!knownEntityKeys.Contains(property.Key))
                                 {
@@ -1565,22 +1572,22 @@ namespace CLI
 
                         foreach (var op in particleSystem.GetInitializers())
                         {
-                            AddStatLocal($"Initializer: {op.GetProperty<string>("_class")}");
+                            AddStatLocal($"Initializer: {op.GetStringProperty("_class")}");
                         }
 
                         foreach (var op in particleSystem.GetRenderers())
                         {
-                            AddStatLocal($"Renderer: {op.GetProperty<string>("_class")}");
+                            AddStatLocal($"Renderer: {op.GetStringProperty("_class")}");
                         }
 
                         foreach (var op in particleSystem.GetEmitters())
                         {
-                            AddStatLocal($"Emitter: {op.GetProperty<string>("_class")}");
+                            AddStatLocal($"Emitter: {op.GetStringProperty("_class")}");
                         }
 
                         foreach (var op in particleSystem.GetOperators())
                         {
-                            AddStatLocal($"Operator: {op.GetProperty<string>("_class")}");
+                            AddStatLocal($"Operator: {op.GetStringProperty("_class")}");
                         }
                     }
                     break;

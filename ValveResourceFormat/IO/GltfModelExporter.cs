@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using SharpGLTF.Memory;
 using SharpGLTF.Schema2;
+using ValveKeyValue;
 using ValveResourceFormat.NavMesh;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.ModelAnimation;
@@ -369,8 +370,8 @@ namespace ValveResourceFormat.IO
             foreach (var entity in entityLump.GetEntities())
             {
                 var transform = EntityTransformHelper.CalculateTransformationMatrix(entity) * parentTransform;
-                var modelName = entity.GetProperty<string>("model");
-                var className = entity.GetProperty<string>("classname");
+                var modelName = entity.GetStringProperty("model");
+                var className = entity.GetStringProperty("classname");
 
                 if (string.IsNullOrEmpty(modelName))
                 {
@@ -400,7 +401,7 @@ namespace ValveResourceFormat.IO
                     }
                     else if (className == "point_template")
                     {
-                        var entityLumpName = entity.GetProperty<string>("entitylumpname");
+                        var entityLumpName = entity.GetStringProperty("entitylumpname");
 
                         if (entityLumpName != null && childEntityLumps.TryGetValue(entityLumpName, out var childLump))
                         {
@@ -429,7 +430,7 @@ namespace ValveResourceFormat.IO
                 // TODO: skybox/skydome
 
                 var model = (VModel)modelResource.DataBlock!;
-                var skinName = entity.GetProperty<string>("skin");
+                var skinName = entity.GetStringProperty("skin");
                 if (skinName == "0" || skinName == "default")
                 {
                     skinName = null;
@@ -437,7 +438,7 @@ namespace ValveResourceFormat.IO
 
                 // todo: rendercolor might sometimes be vec4, which holds renderamt
                 var rendercolor = entity.GetColor32Property("rendercolor");
-                var renderamt = entity.GetPropertyUnchecked("renderamt", 1.0f);
+                var renderamt = entity.GetFloatProperty("renderamt", 1.0f);
 
                 if (renderamt > 1f)
                 {
@@ -502,7 +503,7 @@ namespace ValveResourceFormat.IO
         {
             foreach (var sceneObject in worldNode.SceneObjects)
             {
-                var renderableModel = sceneObject.GetProperty<string>("m_renderableModel");
+                var renderableModel = sceneObject.GetStringProperty("m_renderableModel");
                 if (renderableModel == null)
                 {
                     continue;
@@ -529,7 +530,7 @@ namespace ValveResourceFormat.IO
 
             foreach (var sceneObject in worldNode.AggregateSceneObjects)
             {
-                var renderableModel = sceneObject.GetProperty<string>("m_renderableModel");
+                var renderableModel = sceneObject.GetStringProperty("m_renderableModel");
 
                 if (renderableModel != null)
                 {
@@ -663,7 +664,7 @@ namespace ValveResourceFormat.IO
                 // When exporting map entities, only export the default animation
                 if (entity != null)
                 {
-                    var entityAnimation = entity.GetProperty<string>("defaultanim") ?? entity.GetProperty<string>("idleanim");
+                    var entityAnimation = entity.GetStringProperty("defaultanim") ?? entity.GetStringProperty("idleanim");
                     if (entityAnimation != null)
                     {
                         animationFilter = [
@@ -780,7 +781,7 @@ namespace ValveResourceFormat.IO
             VMesh mesh, Blocks.VBIB vbib, Node[]? joints, int[]? boneRemapTable = null,
             string? skinMaterialPath = null, EntityLump.Entity? entity = null)
         {
-            if (mesh.Data.GetArray("m_sceneObjects").Length == 0)
+            if (mesh.Data.GetArray("m_sceneObjects").Count == 0)
             {
                 return null;
             }
@@ -798,9 +799,9 @@ namespace ValveResourceFormat.IO
 
             if (entity != null && ExportExtras)
             {
-                foreach (var (key, value) in entity.Properties)
+                foreach (var (key, value) in entity.Children)
                 {
-                    exportedMesh.Extras[key] = value as string;
+                    exportedMesh.Extras[key] = value.ValueType == KVValueType.String ? (string)value : value.ToString();
                 }
             }
 
@@ -930,7 +931,7 @@ namespace ValveResourceFormat.IO
 
         private static PunctualLight CreateGltfLightEnvironment(ModelRoot exportedModel, VEntityLump.Entity entity)
         {
-            var intensity = entity.GetPropertyUnchecked("brightness", 1f);
+            var intensity = entity.GetFloatProperty("brightness", 1f);
             var color = entity.GetColor32Property("color");
             color = ColorSpace.SrgbGammaToLinear(color);
 

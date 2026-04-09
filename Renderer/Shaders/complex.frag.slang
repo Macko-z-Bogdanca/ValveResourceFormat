@@ -9,6 +9,7 @@
 #define GameVfx_csgo_lightmappedgeneric 0
 #define GameVfx_csgo_simple 0
 #define GameVfx_csgo_simple_2way_blend 0
+#define GameVfx_csgo_simple_3layer_parallax 0
 #define GameVfx_csgo_static_overlay 0
 #define GameVfx_csgo_unlitgeneric 0
 #define GameVfx_csgo_vertexlitgeneric 0
@@ -88,10 +89,6 @@ uniform int F_NO_SPECULAR_AT_FULL_ROUGHNESS; // csgo_lightmappedgeneric, pbr
 //#define F_USE_PER_VERTEX_CURVATURE 0 // todo; vr_skin, vr_skin_blended
 //#define F_SSS_MASK 0 // todo; vr_skin
 
-// vr_standard
-#define F_HIGH_QUALITY_GLOSS 0 // vr_standard
-#define F_BLEND_NORMALS 0 // blend, vr_standard, vr_substance_painter
-
 //End of feature defines
 
 in vec3 vFragPosition;
@@ -105,8 +102,8 @@ centroid in vec4 vVertexColorOut;
 out vec4 outputColor;
 
 uniform sampler2D g_tBlueNoise;
-uniform sampler2D g_tColor; // SrgbRead(true)
-uniform sampler2D g_tNormal;
+uniform sampler2D g_tColor; // SrgbRead(true) Sampler(UserConfig)
+uniform sampler2D g_tNormal; // Sampler(UserConfig)
 uniform sampler2D g_tTintMask;
 
 #if defined(foliage_vfx_common)
@@ -138,7 +135,7 @@ uniform sampler2D g_tTintMask;
     #define csgo_generic_blend
 #endif
 
-#if (defined(simple_blend_common) || defined(csgo_generic_blend) || defined(vr_standard_vfx_blend) || (GameVfx_environment_blend != 0))
+#if (defined(simple_blend_common) || defined(csgo_generic_blend) || (GameVfx_environment_blend != 0))
     #if (GameVfx_steampal_2way_blend_mask == 0) // blending without vertex paint
         in vec4 vColorBlendValues;
     #endif
@@ -160,12 +157,12 @@ uniform sampler2D g_tTintMask;
 #define _colorAlphaMetalness ((defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 1) || (GameVfx_pbr != 0))
 #define _colorAlphaAO ((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 0)) || (defined(simple_blend_common) && (F_ENABLE_AMBIENT_OCCLUSION == 1))
 #define _metalnessTexture (defined(complex_vfx_common) && (F_METALNESS_TEXTURE == 1) && ((F_ALPHA_TEST == 1) || (F_TRANSLUCENT == 1))) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || (GameVfx_csgo_vertexlitgeneric != 0)
-#define _ambientOcclusionTexture (((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || (GameVfx_csgo_foliage != 0) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || defined(csgo_generic_vfx_common) || (GameVfx_pbr != 0))
+#define _ambientOcclusionTexture (((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || (GameVfx_csgo_foliage != 0) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || defined(csgo_generic_vfx_common) || (GameVfx_pbr != 0) || (GameVfx_csgo_simple_3layer_parallax != 0))
 
 #define unlit ((GameVfx_vr_unlit != 0) || (GameVfx_unlit != 0) || (GameVfx_csgo_unlitgeneric != 0) || (F_FULLBRIGHT == 1) || (F_UNLIT == 1) || (defined(static_overlay_vfx_common) && F_LIT == 0)) || (GameVfx_csgo_decalmodulate != 0)
 #define alphatest (F_ALPHA_TEST == 1) || (((GameVfx_csgo_unlitgeneric != 0) || defined(static_overlay_vfx_common)) && (F_BLEND_MODE == 2)) || (GameVfx_csgo_decalmodulate != 0)
 #define translucent (F_TRANSLUCENT == 1) || (F_GLASS == 1) || (F_BLEND_MODE > 0 && F_BLEND_MODE != 2) || defined(glass_vfx_common) || (GameVfx_csgo_decalmodulate != 0) || (((GameVfx_csgo_unlitgeneric != 0) || defined(static_overlay_vfx_common)) && (F_BLEND_MODE == 1)) // need to set this up on the cpu side
-#define selfillum ((F_SELF_ILLUM == 1 && ((GameVfx_generic != 0) || defined(complex_vfx_common) || (GameVfx_csgo_vertexlitgeneric != 0) || (GameVfx_vr_skin != 0))) || (GameVfx_csgo_unlitgeneric != 0))
+#define selfillum ((F_SELF_ILLUM == 1 && ((GameVfx_generic != 0) || defined(complex_vfx_common) || (GameVfx_csgo_vertexlitgeneric != 0) || (GameVfx_vr_skin != 0) || (GameVfx_csgo_weapon != 0))) || (GameVfx_csgo_unlitgeneric != 0))
 #define blendMod2x (F_BLEND_MODE == 3) || (GameVfx_csgo_decalmodulate != 0)
 #define blendModThenAdd (F_BLEND_MODE == 6)
 
@@ -245,6 +242,30 @@ uniform sampler2D g_tTintMask;
     //uniform sampler2D g_tRevealOverlay;
 #endif
 
+#if (GameVfx_csgo_simple_3layer_parallax != 0)
+    uniform sampler2D g_tLayer0Mask; // Sampler(UserConfig)
+    uniform float g_flMetalness = 0.0;
+
+    // Layer 1
+    uniform sampler2D g_tLayer1Color; // SrgbRead(true) Sampler(UserConfig)
+    uniform vec3 g_vLayer1EmissiveTint = vec3(1.0);
+    uniform float g_flLayer1EmissiveLevel = 0.0;
+    uniform float g_flLayer1RefractionAmount = 0.0;
+    //uniform float g_flLayer1RoughnessBlurMin = 0.0;
+    //uniform float g_flLayer1RoughnessBlurMax = 0.0;
+    uniform float g_flLayer1Offset = 0.0;
+
+    // Layer 2
+    uniform sampler2D g_tLayer2Color; // SrgbRead(true) Sampler(UserConfig)
+    uniform vec3 g_vLayer2EmissiveTint = vec3(1.0);
+    uniform float g_flLayer2EmissiveLevel = 0.0;
+    uniform float g_flLayer2EmissiveFresnel = 0.0;
+    uniform float g_flLayer2RefractionAmount = 0.0;
+    //uniform float g_flLayer2RoughnessBlurMin = 0.0;
+    //uniform float g_flLayer2RoughnessBlurMax = 0.0;
+    uniform float g_flLayer2Offset = 0.0;
+#endif
+
 #if defined(simple_blend_common)
     uniform sampler2D g_tMask;
     uniform float g_flMetalnessA = 0.0;
@@ -254,35 +275,6 @@ uniform sampler2D g_tTintMask;
         uniform float g_BlendFalloff = 0.0;
         uniform float g_BlendHeight = 0.0;
     #endif
-#endif
-
-#if (GameVfx_vr_standard != 0)
-    #if (F_HIGH_QUALITY_GLOSS == 1)
-        #define ANISO_ROUGHNESS
-        uniform sampler2D g_tNormal2;
-        uniform sampler2D g_tGloss;
-    #endif
-
-    #if defined(vr_standard_vfx_blend)
-
-        #if (F_SPECULAR == 1)
-            // uniform sampler2D g_tColor1;
-            uniform sampler2D g_tLayer1Color; // SrgbRead(true)
-            #define VR_STANDARD_Color2 g_tLayer1Color
-        #else
-            uniform sampler2D g_tLayer1Color2; // SrgbRead(true)
-            uniform sampler2D g_tLayer2Color2; // SrgbRead(true)
-            #define VR_STANDARD_Color2 g_tLayer1Color2
-        #endif
-
-        uniform sampler2D g_tLayer1RevealMask;
-        uniform float g_flLayer1BlendSoftness = 0.5;
-
-        #if (F_BLEND_NORMALS == 1)
-            uniform sampler2D g_tLayer1Normal;
-        #endif
-    #endif
-
 #endif
 
 #if (GameVfx_vr_complex != 0) && (F_METALNESS_TEXTURE == 0)
@@ -321,6 +313,48 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     MaterialProperties_t mat;
     InitProperties(mat, vertexNormals, vFragPosition, vTangentOut, vBitangentOut);
 
+#if (GameVfx_csgo_simple_3layer_parallax != 0)
+    vec4 normalTexture = texture(g_tNormal, texCoord);
+    mat.NormalMap = DecodeHemiOctahedronNormal(normalTexture.rg);
+
+    // Parallax
+    vec3 viewDirInv = -mat.ViewDir;
+    float invDepth = 1.0 / dot(viewDirInv, mat.GeometricNormal);
+    float NdotV = clamp(dot(mat.ViewDir, mat.GeometricNormal), 0.0, 1.0);
+    float fresnel = clamp(pow(NdotV, 0.7), 0.0, 1.0);
+    vec2 viewDirTs = vec2(dot(viewDirInv, mat.Tangent), dot(viewDirInv, mat.Bitangent));
+    vec2 normalXY = vec2(mat.NormalMap.x, -mat.NormalMap.y);
+
+    // Shader has "Expression(this/1024)", we do this here
+    vec2 parallaxDir = viewDirTs * (fresnel * invDepth);
+    vec2 layer1UV = normalXY * g_flLayer1RefractionAmount + texCoord + parallaxDir * (g_flLayer1Offset / 1024.0);
+    vec2 layer2UV = normalXY * g_flLayer2RefractionAmount + texCoord + parallaxDir * (g_flLayer2Offset / 1024.0);
+
+    vec4 color = texture(g_tColor, texCoord);
+    float mask = texture(g_tLayer0Mask, texCoord).x;
+    vec4 layer1Color = texture(g_tLayer1Color, layer1UV);
+    vec3 layer2Color = texture(g_tLayer2Color, layer2UV).rgb;
+
+    color.rgb = mix(mix(layer2Color, layer1Color.rgb, layer1Color.a), color.rgb, mask);
+
+    #undef TINT_NOT_APPLIED
+    #if (F_TINT_MASK == 1)
+        float tintMask = texture(g_tTintMask, texCoord).x;
+        vec3 tintFactor = mix(vec3(1.0), vVertexColorOut.rgb, tintMask);
+    #else
+        vec3 tintFactor = vVertexColorOut.rgb;
+    #endif
+    color.rgb *= tintFactor;
+
+    mat.Metalness = g_flMetalness * mask;
+
+    // Emissive
+    vec3 layer1Emissive = (layer1Color.rgb * g_vLayer1EmissiveTint * g_flLayer1EmissiveLevel) * tintFactor;
+    float emissiveFresnel = clamp(pow(NdotV, g_flLayer2EmissiveFresnel), 0.0, 1.0);
+    vec3 layer2Emissive = (layer2Color * emissiveFresnel * g_vLayer2EmissiveTint * g_flLayer2EmissiveLevel) * tintFactor;
+    mat.IllumColor = mix(layer2Emissive, layer1Emissive, layer1Color.a) * (1.0 - mask);
+
+#else
     vec4 color = texture(g_tColor, texCoord);
     vec4 normalTexture = texture(g_tNormal, texCoord);
 
@@ -328,16 +362,8 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
 #if defined(terrain_blend_common)
     vec2 texCoordB = texCoord * g_vTexCoordScale2.xy;
 
-    #if defined(vr_standard_vfx_blend)
-        vec4 color2 = texture(VR_STANDARD_Color2, texCoordB);
-        vec4 normalTexture2 = normalTexture;
-        #if (F_BLEND_NORMALS == 1)
-            normalTexture2 = texture(g_tLayer1Normal, texCoordB);
-        #endif
-    #else
-        vec4 color2 = texture(g_tLayer2Color, texCoordB);
-        vec4 normalTexture2 = texture(g_tLayer2NormalRoughness, texCoordB);
-    #endif
+    vec4 color2 = texture(g_tLayer2Color, texCoordB);
+    vec4 normalTexture2 = texture(g_tLayer2NormalRoughness, texCoordB);
 
     // 0: VertexBlend 1: BlendModulateTexture,rg 2: NewLayerBlending,g 3: NewLayerBlending,a
     #if (defined(csgo_generic_vfx_common) && F_FANCY_BLENDING > 0)
@@ -367,11 +393,6 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
         #endif
 
         blendFactor = ApplyBlendModulation(blendFactor, blendModTexel.r, softnessPaint);
-    #elif (defined(vr_standard_vfx_blend))
-        float blendFactor = vColorBlendValues.r;
-        vec4 blendModTexel = texture(g_tLayer1RevealMask, texCoordB);
-
-        blendFactor = ApplyBlendModulation(blendFactor, blendModTexel.g, blendModTexel.r * g_flLayer1BlendSoftness);
     #elif (GameVfx_environment_blend != 0)
         float blendFactor = vColorBlendValues.r;
         float revealMask = texture(g_tRevealMask2, texCoordB).r;
@@ -440,6 +461,7 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     #if (F_SUBSURFACE_SCATTERING == 1)
         //mat.SSSMask = texture(g_tSSSMask, texCoord).g;
     #endif
+#endif
 #endif
 
     mat.Albedo = color.rgb;
@@ -513,23 +535,18 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
         return mat;
     #endif
 
-    #if (GameVfx_vr_standard != 0) && (F_HIGH_QUALITY_GLOSS == 1)
-        normalTexture = texture(g_tNormal2, texCoord);
-    #endif
-
     // Normals and Roughness
-    #if (GameVfx_generic != 0) || (GameVfx_crystal != 0) || (GameVfx_vr_standard != 0) || (GameVfx_vr_eyeball != 0)
-        mat.NormalMap = DecodeDxt5Normal(normalTexture);
-    #else
-        mat.NormalMap = DecodeHemiOctahedronNormal(normalTexture.rg);
+    #if (GameVfx_csgo_simple_3layer_parallax == 0)
+        #if (GameVfx_generic != 0) || (GameVfx_crystal != 0) || (GameVfx_vr_standard != 0) || (GameVfx_vr_eyeball != 0)
+            mat.NormalMap = DecodeDxt5Normal(normalTexture);
+        #else
+            mat.NormalMap = DecodeHemiOctahedronNormal(normalTexture.rg);
+        #endif
     #endif
 
 #if defined(ANISO_ROUGHNESS)
     #if (F_ANISOTROPIC_GLOSS == 1)
         mat.RoughnessTex.xy = texture(g_tAnisoGloss, texCoord).rg;
-    #endif
-    #if (GameVfx_vr_standard != 0) && (F_HIGH_QUALITY_GLOSS == 1)
-        mat.RoughnessTex.xy = texture(g_tGloss, texCoord).ag;
     #endif
 #else
     mat.RoughnessTex.xy = normalTexture.bb;
@@ -575,8 +592,6 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     mat.Metalness = color.a;
 #elif defined(simple_blend_common)
     mat.Metalness = mix(g_flMetalnessA, g_flMetalnessB, blendFactor);
-#elif (GameVfx_vr_standard != 0) && (F_METALNESS_TEXTURE == 1)
-    mat.Metalness = texture(g_tMetalnessReflectance, texCoord).r;
 #endif
 
     // Ambient Occlusion
@@ -611,7 +626,7 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     AdjustRoughnessByGeometricNormal(mat);
 
 #if (GameVfx_csgo_character != 0)
-    #if (F_EYEBALLS == 1) && (D_ANIMATED == 1)
+    #if (F_EYEBALLS == 1)
         ApplyEye(eyeInterpolator, texCoord, mat);
     #endif
 #endif

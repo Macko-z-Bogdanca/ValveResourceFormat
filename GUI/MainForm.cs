@@ -1,5 +1,6 @@
 //#define SCREENSHOT_MODE // Uncomment to hide version, keep title bar static, set an exact window size
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -48,13 +49,20 @@ namespace GUI
         public static Dictionary<string, int> ExtensionIcons { get; private set; } = [];
 
         /// <summary>
+        /// Lookup a file extension icon as SVG from GUI/Icons/AssetTypes/ folder.
+        /// </summary>
+        public static Dictionary<string, SKSvg> ExtensionSVGS { get; private set; } = [];
+
+        /// <summary>
         /// Lookup a game icon by appid that are loaded by the Explorer control from Steam.
         /// </summary>
-        public static Dictionary<int, int> GameIcons { get; private set; } = [];
+        public static ConcurrentDictionary<int, int> GameIcons { get; private set; } = new();
 
         private readonly string[] Args;
+        internal ExplorerControl? explorerControl;
 
         private SearchForm? searchForm;
+        private Ipc.IpcWindow? ipcWindow;
 
         static MainForm()
         {
@@ -74,6 +82,13 @@ namespace GUI
             Themer.InitializeTheme();
             InitializeComponent();
             LoadIcons();
+
+            // Let the explorer start scanning games before the window even spawns
+            if (args.Length == 0 && (Settings.IsFirstStartup || Settings.Config.OpenExplorerOnStart != 0))
+            {
+                EnsureExplorerControl();
+            }
+
             Themer.ApplyTheme(this);
 
             if (Settings.Config.WindowWidth > 0 && Settings.Config.WindowHeight > 0)
@@ -214,8 +229,10 @@ namespace GUI
                 if (extension.SequenceEqual(".svg"))
                 {
 #pragma warning disable CA2000 // Dispose objects before losing scope, this is a false positive
-                    using var svg = new SKSvg();
+                    var svg = new SKSvg();
                     svg.Load(stream);
+
+                    ExtensionSVGS.TryAdd(iconName, svg);
 
                     using var bitmap = Themer.SvgToBitmap(svg, ImageList.ImageSize.Width, ImageList.ImageSize.Height);
                     AddFixedImageToImageList(bitmap, ImageList);
@@ -242,7 +259,9 @@ namespace GUI
                 {
                     var space = line.IndexOf(' ', StringComparison.Ordinal);
                     var addResult = ExtensionIcons.TryAdd(line[..space], ExtensionIcons[line[(space + 1)..]]);
+                    var addResultSVG = ExtensionSVGS.TryAdd(line[..space], ExtensionSVGS[line[(space + 1)..]]);
                     Debug.Assert(addResult, "Duplicate icon");
+                    Debug.Assert(addResultSVG, "Duplicate SVG icon");
                 }
             }
         }
@@ -278,6 +297,7 @@ namespace GUI
                         if (!File.Exists(dirFile))
                         {
                             Log.Error(nameof(MainForm), $"File '{file}' does not exist.");
+                            mainTabs.OpenTab("Console");
                             continue;
                         }
 
@@ -301,7 +321,8 @@ namespace GUI
 
                             if (packageFile == null)
                             {
-                                Log.Error(nameof(MainForm), $"File '{packageFile}' does not exist in package '{file}'.");
+                                Log.Error(nameof(MainForm), $"File '{innerFile}' does not exist in package '{file}'.");
+                                mainTabs.OpenTab("Console");
                                 continue;
                             }
                         }
@@ -339,6 +360,7 @@ namespace GUI
                 if (!File.Exists(file))
                 {
                     Log.Error(nameof(MainForm), $"File '{file}' does not exist.");
+                    mainTabs.OpenTab("Console");
                     continue;
                 }
 
@@ -404,6 +426,8 @@ namespace GUI
             {
                 OpenExplorer();
             }
+
+            ipcWindow = new();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -423,6 +447,8 @@ namespace GUI
                 Settings.Config.WindowState = (int)(placement.showCmd == SHOW_WINDOW_CMD.SW_SHOWMAXIMIZED ? FormWindowState.Maximized : FormWindowState.Normal);
             }
 #endif
+
+            ipcWindow?.DestroyHandle();
 
             Settings.Save();
             base.OnFormClosing(e);
@@ -1087,13 +1113,15 @@ namespace GUI
             if (package != null)
             {
                 searchForm ??= new();
+                searchForm.SetSearchableUserDataKeys(package.GetSearchDataKeysAsync());
                 var result = searchForm.ShowDialog();
                 if (result == DialogResult.OK)
                 {
                     var searchText = searchForm.SearchText;
-                    if (!string.IsNullOrEmpty(searchText))
+                    var filterKey = searchForm.SelectedFilterKey;
+                    if (!string.IsNullOrEmpty(searchText) || filterKey != null)
                     {
-                        package.SearchAndFillResults(searchText, searchForm.SelectedSearchType);
+                        package.SearchAndFillResults(searchText, searchForm.SelectedSearchType, filterKey, searchForm.SelectedFilterValue);
                     }
                 }
                 return;
@@ -1128,15 +1156,17 @@ namespace GUI
 
         private void OpenExplorer_Click(object sender, EventArgs e) => OpenExplorer();
 
+        private ExplorerControl EnsureExplorerControl()
+        {
+            explorerControl ??= new ExplorerControl { Dock = DockStyle.Fill };
+            return explorerControl;
+        }
+
         private void OpenExplorer()
         {
-            foreach (TabPage tabPage in mainTabs.TabPages)
+            if (mainTabs.OpenTab("Explorer"))
             {
-                if (tabPage.Text == "Explorer")
-                {
-                    mainTabs.SelectTab(tabPage);
-                    return;
-                }
+                return;
             }
 
             var explorerTab = new ThemedTabPage("Explorer")
@@ -1147,10 +1177,7 @@ namespace GUI
 
             try
             {
-                explorerTab.Controls.Add(new ExplorerControl
-                {
-                    Dock = DockStyle.Fill,
-                });
+                explorerTab.Controls.Add(EnsureExplorerControl());
                 mainTabs.TabPages.Insert(1, explorerTab);
                 mainTabs.SelectTab(explorerTab);
                 explorerTab = null;
@@ -1171,7 +1198,7 @@ namespace GUI
 
             try
             {
-                welcomeTab.Controls.Add(new WelcomeControl
+                welcomeTab.Controls.Add(new WelcomeControl(EnsureExplorerControl())
                 {
                     Dock = DockStyle.Fill
                 });

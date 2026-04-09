@@ -19,6 +19,9 @@ namespace GUI.Types.GLViewers
     {
         protected Model? model { get; init; }
         private PhysAggregateData? phys;
+
+        private readonly List<string?> animationIndexMap = [];
+
         public ComboBox? animationComboBox { get; protected set; }
         protected CheckBox? animationPlayPause;
         private CheckBox? rootMotionCheckBox;
@@ -101,8 +104,17 @@ namespace GUI.Types.GLViewers
                 Debug.Assert(modelSceneNode != null);
                 using (var lockedGL = MakeCurrent())
                 {
-                    modelSceneNode.SetAnimation(animation);
+                    if (animationIndexMap.Count > i &&
+                        animationIndexMap[i] is string animationId)
+                    {
+                        modelSceneNode.SetAnimationByName(animationId);
+                    }
+                    else
+                    {
+                        modelSceneNode.SetAnimation(null);
+                    }
                 }
+
                 rootMotionCheckBox!.Enabled = animationController.ActiveAnimation?.HasMovementData() ?? false;
                 enableRootMotion = rootMotionCheckBox.Enabled && rootMotionCheckBox.Checked;
             });
@@ -131,7 +143,7 @@ namespace GUI.Types.GLViewers
             slowmodeTrackBar = UiControl.AddTrackBar(value =>
             {
                 animationController.FrametimeMultiplier = value;
-            });
+            }, animationController.FrametimeMultiplier);
 
             animationPlayPause.Enabled = false;
             animationTrackBar.Enabled = false;
@@ -255,7 +267,7 @@ namespace GUI.Types.GLViewers
 
                 Input.OrbitTargetProvider = () => modelSceneNode.BoundingBox.Center;
 
-                var animations = modelSceneNode.GetSupportedAnimationNames().ToArray();
+                var animations = modelSceneNode.Animations.Keys.ToArray();
 
                 if (animations.Length > 0)
                 {
@@ -270,10 +282,8 @@ namespace GUI.Types.GLViewers
 
                     showSkeletonCheckbox = UiControl.AddCheckBox("Show skeleton", false, isChecked =>
                     {
-                        if (skeletonSceneNode != null)
-                        {
-                            skeletonSceneNode.Enabled = isChecked;
-                        }
+                        using var lockedGl = MakeCurrent();
+                        skeletonSceneNode?.Enabled = isChecked;
                     });
                 }
 
@@ -417,9 +427,14 @@ namespace GUI.Types.GLViewers
                 var time = animationController.Time % totalTime;
                 var frameNumber = animationController.Frame + 1;
 
+                var additive = animationController.ActiveAnimation.Clip is { IsAdditive: true }
+                    ? "Additive: true\n"
+                    : string.Empty;
+
                 animationTimeLabel.Text = $"Frame: {frameNumber,4} / {frameCount}\n" +
                     $"Time: {time:F2} / {totalTime:F2}\n" +
-                    $"FPS: {fps:F2}\n";
+                    $"FPS: {fps:F2}\n" +
+                    additive;
             }
 
             void UpdateUiAnimationState(Animation? animation, int frame)
@@ -590,6 +605,8 @@ namespace GUI.Types.GLViewers
         {
             Debug.Assert(animationComboBox != null);
 
+            animationIndexMap.Clear();
+
             animationComboBox.BeginUpdate();
             animationComboBox.Items.Clear();
 
@@ -597,8 +614,18 @@ namespace GUI.Types.GLViewers
             {
                 animationComboBox.Enabled = true;
                 animationComboBox.Items.Add($"({animations.Length} animations available)");
+                animationIndexMap.Add(null);
 
                 var animationToFolder = model?.GetFaceposerFolders() ?? [];
+
+                // Add ag2 folders
+                foreach (var anim in animations)
+                {
+                    if (!animationToFolder.ContainsKey(anim))
+                    {
+                        animationToFolder[anim] = (Path.GetDirectoryName(anim) ?? string.Empty).Replace('\\', '/');
+                    }
+                }
 
                 if (animationToFolder.Count > 0)
                 {
@@ -623,14 +650,17 @@ namespace GUI.Types.GLViewers
                             Text = folderGroup.Key,
                             IsHeader = true
                         });
+                        animationIndexMap.Add(null);
 
                         foreach (var anim in folderGroup.OrderBy(a => a))
                         {
+                            var displayName = Path.GetFileNameWithoutExtension(anim);
                             animationComboBox.Items.Add(new ThemedComboBoxItem
                             {
-                                Text = anim,
+                                Text = displayName,
                                 IsHeader = false
                             });
+                            animationIndexMap.Add(anim);
                         }
                     }
 
@@ -641,20 +671,24 @@ namespace GUI.Types.GLViewers
                             Text = "Ungrouped",
                             IsHeader = true
                         });
+                        animationIndexMap.Add(null);
 
                         foreach (var anim in ungroupedAnimations)
                         {
+                            var displayName = Path.GetFileNameWithoutExtension(anim);
                             animationComboBox.Items.Add(new ThemedComboBoxItem
                             {
-                                Text = anim,
+                                Text = displayName,
                                 IsHeader = false
                             });
+                            animationIndexMap.Add(anim);
                         }
                     }
                 }
                 else
                 {
                     animationComboBox.Items.AddRange(animations);
+                    animationIndexMap.AddRange(animations);
                 }
 
                 animationComboBoxCurrentIndex = -10;

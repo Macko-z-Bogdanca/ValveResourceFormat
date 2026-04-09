@@ -11,7 +11,7 @@ namespace GUI.Utils
     /// </summary>
     static class Settings
     {
-        private const int SettingsFileCurrentVersion = 12;
+        private const int SettingsFileCurrentVersion = 14;
         private const int RecentFilesLimit = 20;
 
         /// <summary>
@@ -66,6 +66,8 @@ namespace GUI.Utils
             public int ShadowResolution { get; set; }
             /// <summary>Gets or sets the camera field of view in degrees.</summary>
             public float FieldOfView { get; set; }
+            /// <summary>Gets or sets the mouse look sensitivity.</summary>
+            public float MouseSensitivity { get; set; }
             /// <summary>Gets or sets the number of MSAA samples used for anti-aliasing.</summary>
             public int AntiAliasingSamples { get; set; }
             /// <summary>Gets or sets the top edge position of the main window.</summary>
@@ -90,6 +92,10 @@ namespace GUI.Utils
             public int OpenExplorerOnStart { get; set; }
             /// <summary>Gets or sets the font size used in the text viewer.</summary>
             public int TextViewerFontSize { get; set; }
+            /// <summary>Gets or sets whether the package file list uses grid view (1) or list view (0).</summary>
+            public int PackageGridView { get; set; }
+            /// <summary>Gets or sets the grid thumbnail size index (0–4, mapping to ThumbnailSizes enum).</summary>
+            public int PackageGridSize { get; set; }
             /// <summary>Internal settings file version used to apply migrations when upgrading from older versions. Do not modify manually.</summary>
             public int _VERSION_DO_NOT_MODIFY { get; set; }
             /// <summary>Gets or sets the application update check state.</summary>
@@ -212,6 +218,7 @@ namespace GUI.Utils
             Config.AntiAliasingSamples = Math.Clamp(Config.AntiAliasingSamples, 0, 64);
             Config.Volume = MathUtils.Saturate(Config.Volume);
             Config.TextViewerFontSize = Math.Clamp(Config.TextViewerFontSize, 8, 24);
+            Config.PackageGridSize = Math.Clamp(Config.PackageGridSize, 0, Enum.GetValues<Types.PackageViewer.ThumbnailRenderers.ThumbnailSizes>().Length - 1);
 
             if (currentVersion < 2) // version 2: added anti aliasing samples
             {
@@ -251,6 +258,17 @@ namespace GUI.Utils
             if (currentVersion < 12) // version 12: enable automatic update checks by default
             {
                 Config.Update.CheckAutomatically = true;
+            }
+
+            if (currentVersion < 13) // version 13: added package grid view and grid size
+            {
+                Config.PackageGridView = 1;
+                Config.PackageGridSize = 2;
+            }
+
+            if (currentVersion < 14) // version 14: added mouse sensitivity
+            {
+                Config.MouseSensitivity = 4f;
             }
 
             if (currentVersion > 0 && currentVersion != SettingsFileCurrentVersion)

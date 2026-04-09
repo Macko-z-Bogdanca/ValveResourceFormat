@@ -116,10 +116,13 @@ namespace ValveResourceFormat.Renderer.Materials
         /// <summary>Gets a value indicating whether this material uses alpha-to-coverage alpha testing.</summary>
         public bool IsAlphaTest => blendMode == BlendMode.AlphaTest;
 
+        private readonly MaterialLoader? Loader;
+
         private BlendMode blendMode;
         private bool isRenderBackfaces;
         private bool hasDepthBias;
         private int textureUnit;
+        private readonly List<int> boundSamplerUnits = [];
 
         /// <summary>Initializes a new instance of the <see cref="RenderMaterial"/> class from a parsed material resource, loading its shader and applying render state.</summary>
         /// <param name="material">The parsed Source 2 material data.</param>
@@ -129,6 +132,8 @@ namespace ValveResourceFormat.Renderer.Materials
         public RenderMaterial(Material material, RendererContext rendererContext, Dictionary<string, byte>? shaderArguments)
             : this(material)
         {
+            Loader = rendererContext.MaterialLoader;
+
             var materialArguments = material.GetShaderArguments();
             var combinedShaderParameters = shaderArguments ?? materialArguments;
 
@@ -303,14 +308,32 @@ namespace ValveResourceFormat.Renderer.Materials
                 return;
             }
 
+            boundSamplerUnits.Clear();
+
+            var userConfigSampler = 0;
+            if (shader.SamplerUserConfigUniforms.Count > 0 && Loader != null)
+            {
+                var addressModeU = (int)Material.IntParams.GetValueOrDefault("g_nTextureAddressModeU");
+                var addressModeV = (int)Material.IntParams.GetValueOrDefault("g_nTextureAddressModeV");
+                userConfigSampler = Loader.GetOrCreateSampler(addressModeU, addressModeV);
+            }
+
             foreach (var (name, defaultTexture) in shader.Default.Textures)
             {
                 var texture = Textures.GetValueOrDefault(name, defaultTexture);
 
-                if (shader.SetTexture(textureUnit, name, texture))
+                if (!shader.SetTexture(textureUnit, name, texture))
                 {
-                    textureUnit++;
+                    continue;
                 }
+
+                if (userConfigSampler != 0 && shader.SamplerUserConfigUniforms.Contains(name))
+                {
+                    GL.BindSampler(textureUnit, userConfigSampler);
+                    boundSamplerUnits.Add(textureUnit);
+                }
+
+                textureUnit++;
             }
 
             foreach (var param in shader.Default.Material.IntParams)
@@ -422,6 +445,11 @@ namespace ValveResourceFormat.Renderer.Materials
             for (var i = TextureUnitStart; i <= textureUnit; i++)
             {
                 GL.BindTextureUnit(i, 0);
+            }
+
+            foreach (var unit in boundSamplerUnits)
+            {
+                GL.BindSampler(unit, 0);
             }
         }
 

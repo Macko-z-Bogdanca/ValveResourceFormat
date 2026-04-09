@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using OpenTK.Graphics.OpenGL;
+using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Renderer.Buffers;
 using ValveResourceFormat.Renderer.SceneEnvironment;
 using ValveResourceFormat.Renderer.SceneNodes;
@@ -72,6 +73,15 @@ namespace ValveResourceFormat.Renderer
 
         /// <summary>Gets or sets the physics simulation world associated with this scene.</summary>
         public Rubikon? PhysicsWorld { get; set; }
+
+        /// <summary>Gets or sets the voxel visibility data.</summary>
+        public VoxelVisibility? VoxelVisibility { get; set; }
+
+        /// <summary>Gets or sets whether PVS culling is enabled for this scene.</summary>
+        public bool EnablePvsCulling { get; set; }
+
+        /// <summary>Gets or sets the PVS bitfield for the cluster at the current camera position.</summary>
+        public byte[]? CurrentFramePvs { get; set; }
 
         private UniformBuffer<LightingConstants>? lightingBuffer;
         private UniformBuffer<EnvMapArray>? envMapBuffer;
@@ -189,7 +199,7 @@ namespace ValveResourceFormat.Renderer
             CreateBuffers();
             CalculateLightProbeBindings();
             CalculateEnvironmentMaps();
-            CreateInstanceTransformBuffers(); // after calculating envmap and lpv
+            CreateInstanceTransformBuffers(deletePrevious: true); // after calculating envmap and lpv
 
             UpdateBuffers();
 
@@ -276,6 +286,30 @@ namespace ValveResourceFormat.Renderer
         }
 
         /// <summary>
+        /// Removes all nodes from the scene, also disposes loaded materials and gpu mesh buffers.
+        /// </summary>
+        public void Clear()
+        {
+            foreach (var item in dynamicNodes)
+            {
+                item.Delete();
+            }
+            dynamicNodes.Clear();
+
+            foreach (var item in staticNodes)
+            {
+                item.Delete();
+            }
+            staticNodes.Clear();
+
+            StaticOctree.Clear();
+            DynamicOctree.Clear();
+
+            RendererContext.MaterialLoader.Clear();
+            RendererContext.MeshBufferCache.Clear();
+        }
+
+        /// <summary>
         /// Finds a scene node by its scene-unique ID.
         /// </summary>
         /// <param name="id">The node ID to look up.</param>
@@ -323,9 +357,10 @@ namespace ValveResourceFormat.Renderer
                     return false;
                 }
 
-                return node.EntityData.Properties.Properties.TryGetValue(keyToFind, out var value)
-                    && value.Value is string outString
-                    && valueToFind.Equals(outString, StringComparison.OrdinalIgnoreCase);
+                var value = node.EntityData[keyToFind];
+                return value != null
+                    && value.ValueType == ValveKeyValue.KVValueType.String
+                    && valueToFind.Equals((string)value, StringComparison.OrdinalIgnoreCase);
             }
 
             return staticNodes.Find(IsMatchingEntity) ?? dynamicNodes.Find(IsMatchingEntity);
@@ -370,14 +405,12 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Allocates GPU uniform and storage buffers for lighting, environment maps, light probes, frustum planes, and indirect draws.</summary>
         public void CreateBuffers()
         {
-            lightingBuffer = new(ReservedBufferSlots.Lighting)
-            {
-                Data = LightingInfo.LightingData
-            };
+            lightingBuffer ??= new(ReservedBufferSlots.Lighting);
+            envMapBuffer ??= new(ReservedBufferSlots.EnvironmentMap);
+            lpvBuffer ??= new(ReservedBufferSlots.LightProbe);
+            frustumBuffer ??= new(ReservedBufferSlots.FrustumPlanes);
 
-            envMapBuffer = new(ReservedBufferSlots.EnvironmentMap);
-            lpvBuffer = new(ReservedBufferSlots.LightProbe);
-            frustumBuffer = new(ReservedBufferSlots.FrustumPlanes);
+            lightingBuffer.Data = LightingInfo.LightingData;
 
             LightingInfo.CreateBarnLightBuffer();
             CreateIndirectDrawBuffers();
@@ -392,6 +425,12 @@ namespace ValveResourceFormat.Renderer
             }
 
             var nodes = AllNodes.ToList();
+
+            if (nodes.Count == 0)
+            {
+                return;
+            }
+
             var maxId = nodes.Max(n => n.Id);
 
             var instanceData = new ObjectDataStandard[maxId + 1];
@@ -921,7 +960,7 @@ namespace ValveResourceFormat.Renderer
 
             entry.DrawCalls ??= CreateDepthOnlyDrawCallCollection();
             // Skip static geo for stationary lights
-            CollectShadowDrawCalls(lightFrustum, includeStatic: light.DirectLight != 3, includeDynamic: true, entry.DrawCalls);
+            CollectShadowDrawCalls(lightFrustum, includeStatic: light.DirectLight != SceneLight.DirectLightType.Stationary, includeDynamic: true, entry.DrawCalls);
             entry.FrustumHash = barnLightFrustumHash;
         }
 
@@ -1566,12 +1605,14 @@ namespace ValveResourceFormat.Renderer
             {
                 // static octree is tightly wrapped around the scene
                 var maxBounds = new AABB();
+                var hasBounds = false;
 
                 foreach (var node in staticNodes)
                 {
                     if (node.LayerEnabled)
                     {
-                        maxBounds = maxBounds.Union(node.BoundingBox);
+                        maxBounds = hasBounds ? maxBounds.Union(node.BoundingBox) : node.BoundingBox;
+                        hasBounds = true;
                     }
                 }
 
@@ -1666,9 +1707,19 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
+            var isAtlas = LightingInfo.LightProbeType == LightProbeType.ProbeAtlas;
+
+            static bool IsValid(SceneLightProbe probe, bool isAtlas) => isAtlas switch
+            {
+                true => probe is { Irradiance: not null, DirectLightShadows: not null },
+                false => true,
+            };
+
             var sortedLightProbes = LightingInfo.LightProbes
+                .Where(probe => IsValid(probe, isAtlas))
                 .OrderByDescending(static lpv => lpv.IndoorOutdoorLevel)
-                .ThenBy(static lpv => lpv.AtlasSize.LengthSquared());
+                .ThenBy(static lpv => lpv.AtlasSize.LengthSquared())
+                .ToList();
 
             var nodes = new List<SceneNode>();
 
@@ -1684,7 +1735,7 @@ namespace ValveResourceFormat.Renderer
                 }
 
                 probe.ShaderIndex = i;
-                var data = probe.CalculateGpuProbeData(LightingInfo.LightProbeType == LightProbeType.ProbeAtlas);
+                var data = probe.CalculateGpuProbeData(isAtlas);
                 lpvBuffer.Data.Probes[i] = data;
 
                 nodes.Clear();
@@ -1696,13 +1747,18 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            // Assign random probe to any node that does not have any light probes to fix the flickering,
-            // this isn't ideal, and a proper fix would be to remove D_BAKED_LIGHTING_FROM_PROBE from the shader
-            var firstProbe = LightingInfo.LightProbes[0];
+            if (sortedLightProbes.Count == 0)
+            {
+                // remove baked lighting from probe attribute?
+                return;
+            }
+
+            // Fall back to the global probe
+            var globalProbe = sortedLightProbes[^1];
 
             foreach (var node in AllNodes)
             {
-                node.LightProbeBinding ??= firstProbe;
+                node.LightProbeBinding ??= globalProbe;
             }
         }
 
